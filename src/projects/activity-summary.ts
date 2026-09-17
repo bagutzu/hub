@@ -12,10 +12,11 @@ import {
 import { NormalizedDiscordMessageEventSchema } from "../triggers/discord/events.js";
 import { NormalizedSlackMentionEventSchema } from "../triggers/slack/events.js";
 import { NormalizedLinearEventSchema } from "../triggers/linear/events.js";
+import { NormalizedGitlabEventSchema } from "../triggers/gitlab/events.js";
 import { classifyGitHubEvent } from "../triggers/github/classification.js";
 
 export interface TriggerSummary {
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "gitlab" | "manual" | "schedule";
   headline: string;
   actor: string | null;
   externalUrl: string | null;
@@ -36,6 +37,7 @@ export function summarizeTrigger(source: string, payload: unknown): TriggerSumma
   if (provider === "slack") return summarizeSlack(payload);
   if (provider === "discord") return summarizeDiscord(payload);
   if (provider === "linear") return summarizeLinear(payload);
+  if (provider === "gitlab") return summarizeGitlab(payload);
   if (provider === "schedule") {
     return { provider, headline: "Scheduled run", actor: null, externalUrl: null };
   }
@@ -194,6 +196,43 @@ function summarizeLinear(payload: unknown): TriggerSummary {
     headline: `${prefix}: ${truncate(issue.title, 96)}`,
     actor: event.data.actor?.name ?? event.data.actor?.id ?? null,
     externalUrl: issue.url ?? null,
+  };
+}
+
+const AcceptedGitlabEventSchema = z.object({ event: NormalizedGitlabEventSchema });
+
+function summarizeGitlab(payload: unknown): TriggerSummary {
+  const parsed = AcceptedGitlabEventSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { provider: "gitlab", headline: "GitLab event", actor: null, externalUrl: null };
+  }
+  const event = parsed.data.event;
+  const actor = event.user?.username ?? null;
+  if (event.type === "push") {
+    const branch = event.push.ref.replace(/^refs\/heads\//u, "");
+    const count = event.push.commits;
+    return {
+      provider: "gitlab",
+      headline: `Push to ${branch}${count > 0 ? ` (${String(count)} commit${count === 1 ? "" : "s"})` : ""}`,
+      actor,
+      externalUrl: event.project.webUrl,
+    };
+  }
+  const reference = `${event.item.type === "issue" ? "#" : "!"}${String(event.item.iid)}`;
+  if (event.type === "note") {
+    return {
+      provider: "gitlab",
+      headline: `Note on ${reference}`,
+      actor,
+      externalUrl: event.note.url,
+    };
+  }
+  const noun = event.item.type === "issue" ? "Issue" : "Merge request";
+  return {
+    provider: "gitlab",
+    headline: `${noun} ${reference}: ${truncate(event.item.title, 96)}`,
+    actor,
+    externalUrl: event.item.url,
   };
 }
 

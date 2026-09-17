@@ -13,7 +13,7 @@ export interface QualifierDefinition {
 }
 
 interface EventDefinition {
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "gitlab" | "manual" | "schedule";
   label: string;
   origin: "hub" | "provider";
   qualifiers: readonly QualifierDefinition[];
@@ -61,6 +61,18 @@ const EVENTS = {
   "linear.issue_entered_scope": event("linear", "Linear issue entered scope"),
   "linear.issue_assigned": event("linear", "Linear issue assigned"),
   "linear.comment_created": event("linear", "Linear comment created"),
+  "gitlab.issue_created": event("gitlab", "GitLab issue created"),
+  "gitlab.merge_request_created": event("gitlab", "GitLab merge request created"),
+  "gitlab.issue_comment_created": event("gitlab", "GitLab issue comment created"),
+  "gitlab.merge_request_comment_created": event("gitlab", "GitLab merge request comment created"),
+  "gitlab.issue_label_added": event("gitlab", "GitLab issue label added", [ADDED_LABEL]),
+  "gitlab.merge_request_label_added": event("gitlab", "GitLab merge request label added", [
+    ADDED_LABEL,
+  ]),
+  "gitlab.issue": event("gitlab", "GitLab issue webhook"),
+  "gitlab.merge_request": event("gitlab", "GitLab merge request webhook"),
+  "gitlab.note": event("gitlab", "GitLab issue or merge request note webhook"),
+  "gitlab.push": event("gitlab", "GitLab push"),
   "schedule.tick": event("schedule", "Schedule"),
   "manual.run": event("manual", "Manual run"),
 };

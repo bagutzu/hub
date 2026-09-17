@@ -529,7 +529,7 @@ function eventState(
     const socketState = slackSocketEventState(view.deliveryStatus);
     if (socketState !== undefined) return socketState;
   }
-  if (guide.provider === "github" && !isSecureOrigin(origin)) {
+  if (guideGroups(guide, origin).some((group) => group.unavailable !== undefined)) {
     return "Needs a public HTTPS address";
   }
   if (!view.eventsConfigured) return "Not set up";
@@ -887,7 +887,7 @@ function Segment({ segment }: { segment: StepSegment }) {
   // Instruction prose is muted; the controls to find in the portal are not. That contrast is
   // what makes a step scannable without relying on font weight.
   if (segment.kind === "term") {
-    return <span className="text-foreground">{segment.value}</span>;
+    return <span className="whitespace-nowrap text-foreground">{segment.value}</span>;
   }
   if (segment.kind === "link") {
     return (

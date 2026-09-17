@@ -39,6 +39,7 @@ import { Route as ApiIntegrationsSlackEventsRouteImport } from './routes/api/int
 import { Route as ApiIntegrationsSlackCallbackRouteImport } from './routes/api/integrations/slack/callback'
 import { Route as ApiIntegrationsLinearEventsRouteImport } from './routes/api/integrations/linear/events'
 import { Route as ApiIntegrationsLinearCallbackRouteImport } from './routes/api/integrations/linear/callback'
+import { Route as ApiIntegrationsGitlabEventsRouteImport } from './routes/api/integrations/gitlab/events'
 import { Route as ApiIntegrationsGitlabCallbackRouteImport } from './routes/api/integrations/gitlab/callback'
 import { Route as ApiIntegrationsGithubSetupRouteImport } from './routes/api/integrations/github/setup'
 import { Route as ApiIntegrationsGithubCallbackRouteImport } from './routes/api/integrations/github/callback'
@@ -214,6 +215,12 @@ const ApiIntegrationsLinearCallbackRoute =
     path: '/api/integrations/linear/callback',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiIntegrationsGitlabEventsRoute =
+  ApiIntegrationsGitlabEventsRouteImport.update({
+    id: '/api/integrations/gitlab/events',
+    path: '/api/integrations/gitlab/events',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiIntegrationsGitlabCallbackRoute =
   ApiIntegrationsGitlabCallbackRouteImport.update({
     id: '/api/integrations/gitlab/callback',
@@ -359,6 +366,7 @@ export interface FileRoutesByFullPath {
   '/api/integrations/github/callback': typeof ApiIntegrationsGithubCallbackRoute
   '/api/integrations/github/setup': typeof ApiIntegrationsGithubSetupRoute
   '/api/integrations/gitlab/callback': typeof ApiIntegrationsGitlabCallbackRoute
+  '/api/integrations/gitlab/events': typeof ApiIntegrationsGitlabEventsRoute
   '/api/integrations/linear/callback': typeof ApiIntegrationsLinearCallbackRoute
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
@@ -406,6 +414,7 @@ export interface FileRoutesByTo {
   '/api/integrations/github/callback': typeof ApiIntegrationsGithubCallbackRoute
   '/api/integrations/github/setup': typeof ApiIntegrationsGithubSetupRoute
   '/api/integrations/gitlab/callback': typeof ApiIntegrationsGitlabCallbackRoute
+  '/api/integrations/gitlab/events': typeof ApiIntegrationsGitlabEventsRoute
   '/api/integrations/linear/callback': typeof ApiIntegrationsLinearCallbackRoute
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
@@ -457,6 +466,7 @@ export interface FileRoutesById {
   '/api/integrations/github/callback': typeof ApiIntegrationsGithubCallbackRoute
   '/api/integrations/github/setup': typeof ApiIntegrationsGithubSetupRoute
   '/api/integrations/gitlab/callback': typeof ApiIntegrationsGitlabCallbackRoute
+  '/api/integrations/gitlab/events': typeof ApiIntegrationsGitlabEventsRoute
   '/api/integrations/linear/callback': typeof ApiIntegrationsLinearCallbackRoute
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
@@ -508,6 +518,7 @@ export interface FileRouteTypes {
     | '/api/integrations/github/callback'
     | '/api/integrations/github/setup'
     | '/api/integrations/gitlab/callback'
+    | '/api/integrations/gitlab/events'
     | '/api/integrations/linear/callback'
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
@@ -555,6 +566,7 @@ export interface FileRouteTypes {
     | '/api/integrations/github/callback'
     | '/api/integrations/github/setup'
     | '/api/integrations/gitlab/callback'
+    | '/api/integrations/gitlab/events'
     | '/api/integrations/linear/callback'
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
@@ -605,6 +617,7 @@ export interface FileRouteTypes {
     | '/api/integrations/github/callback'
     | '/api/integrations/github/setup'
     | '/api/integrations/gitlab/callback'
+    | '/api/integrations/gitlab/events'
     | '/api/integrations/linear/callback'
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
@@ -644,6 +657,7 @@ export interface RootRouteChildren {
   ApiIntegrationsGithubCallbackRoute: typeof ApiIntegrationsGithubCallbackRoute
   ApiIntegrationsGithubSetupRoute: typeof ApiIntegrationsGithubSetupRoute
   ApiIntegrationsGitlabCallbackRoute: typeof ApiIntegrationsGitlabCallbackRoute
+  ApiIntegrationsGitlabEventsRoute: typeof ApiIntegrationsGitlabEventsRoute
   ApiIntegrationsLinearCallbackRoute: typeof ApiIntegrationsLinearCallbackRoute
   ApiIntegrationsLinearEventsRoute: typeof ApiIntegrationsLinearEventsRoute
   ApiIntegrationsSlackCallbackRoute: typeof ApiIntegrationsSlackCallbackRoute
@@ -860,6 +874,13 @@ declare module '@tanstack/react-router' {
       path: '/api/integrations/linear/callback'
       fullPath: '/api/integrations/linear/callback'
       preLoaderRoute: typeof ApiIntegrationsLinearCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/integrations/gitlab/events': {
+      id: '/api/integrations/gitlab/events'
+      path: '/api/integrations/gitlab/events'
+      fullPath: '/api/integrations/gitlab/events'
+      preLoaderRoute: typeof ApiIntegrationsGitlabEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/integrations/gitlab/callback': {
@@ -1111,6 +1132,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiIntegrationsGithubCallbackRoute: ApiIntegrationsGithubCallbackRoute,
   ApiIntegrationsGithubSetupRoute: ApiIntegrationsGithubSetupRoute,
   ApiIntegrationsGitlabCallbackRoute: ApiIntegrationsGitlabCallbackRoute,
+  ApiIntegrationsGitlabEventsRoute: ApiIntegrationsGitlabEventsRoute,
   ApiIntegrationsLinearCallbackRoute: ApiIntegrationsLinearCallbackRoute,
   ApiIntegrationsLinearEventsRoute: ApiIntegrationsLinearEventsRoute,
   ApiIntegrationsSlackCallbackRoute: ApiIntegrationsSlackCallbackRoute,
