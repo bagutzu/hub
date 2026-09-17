@@ -80,6 +80,12 @@ export class TriggerDashboard {
           provider: "linear" as const,
           label: linearOrganizationName,
         })),
+        ...connections.gitlab.map(({ id, slug, namespace }) => ({
+          id,
+          slug,
+          provider: "gitlab" as const,
+          label: namespace.fullPath,
+        })),
       ],
     };
   }

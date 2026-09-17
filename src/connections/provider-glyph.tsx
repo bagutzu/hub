@@ -9,13 +9,14 @@ import { TerminalIcon, ClockIcon } from "lucide-react";
 export function ProviderGlyph({
   provider,
 }: {
-  provider: "github" | "discord" | "slack" | "linear" | "manual" | "schedule";
+  provider: "github" | "discord" | "slack" | "linear" | "gitlab" | "manual" | "schedule";
 }) {
   if (provider === "schedule") return <ClockIcon className="size-4.5" aria-hidden="true" />;
   if (provider === "github") return <GitHubMark />;
   if (provider === "discord") return <DiscordMark />;
   if (provider === "slack") return <SlackMark />;
   if (provider === "linear") return <LinearMark />;
+  if (provider === "gitlab") return <GitlabMark />;
   return <TerminalIcon className="size-4.5" aria-hidden="true" />;
 }
 
@@ -39,6 +40,14 @@ function SlackMark() {
   return (
     <svg viewBox="0 0 16 16" className="size-4.5" fill="currentColor" aria-hidden="true">
       <path d="M3.38 9.88A1.69 1.69 0 1 1 1.69 8.2h1.69v1.69Zm.85 0a1.69 1.69 0 1 1 3.38 0v4.23a1.69 1.69 0 1 1-3.38 0V9.88Zm1.69-6.76a1.69 1.69 0 1 1 1.69-1.69v1.69H5.92Zm0 .85a1.69 1.69 0 1 1 0 3.38H1.69a1.69 1.69 0 1 1 0-3.38h4.23Zm6.76 1.69a1.69 1.69 0 1 1 1.69 1.69h-1.69V5.66Zm-.85 0a1.69 1.69 0 1 1-3.38 0V1.43a1.69 1.69 0 1 1 3.38 0v4.23Zm-1.69 6.76a1.69 1.69 0 1 1-1.69 1.69v-1.69h1.69Zm0-.85a1.69 1.69 0 1 1 0-3.38h4.23a1.69 1.69 0 1 1 0 3.38h-4.23Z" />
+    </svg>
+  );
+}
+
+function GitlabMark() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-4.5" fill="currentColor" aria-hidden="true">
+      <path d="m15.73 6.46-.02-.06-2.13-5.56a.55.55 0 0 0-.22-.26.57.57 0 0 0-.65.03.57.57 0 0 0-.19.29l-1.44 4.4H4.92L3.48.9a.56.56 0 0 0-.19-.29.57.57 0 0 0-.65-.03.55.55 0 0 0-.22.26L.29 6.4l-.02.06a3.96 3.96 0 0 0 1.31 4.57l.01.01.02.01 3.24 2.43 1.6 1.21.98.74a.66.66 0 0 0 .8 0l.98-.74 1.6-1.21 3.26-2.44.01-.01a3.96 3.96 0 0 0 1.31-4.57Z" />
     </svg>
   );
 }

@@ -41,9 +41,11 @@ function connectedProviderCount(overview: ProviderApplicationOverview): number {
 function ProviderApplications({
   surface,
   organizationId,
+  organizationSlug,
 }: {
   surface: ProviderApplicationSurface;
   organizationId: string;
+  organizationSlug: string;
 }) {
   const [returned] = useConnectionReturn();
   const [open, setOpen] = useState<Partial<Record<Provider, boolean>>>(() =>
@@ -80,6 +82,8 @@ function ProviderApplications({
             callbackOrigin={overview.callbackOrigin}
             surface={surface}
             organizationId={organizationId}
+            organizationSlug={organizationSlug}
+            pendingAttempt={returned?.provider === guide.provider ? returned.attempt : undefined}
             // Closed until the operator picks one, or until a provider's own return has
             // something to show them. Three open manuals is not a choice, it is a wall.
             open={open[guide.provider] ?? false}
@@ -114,9 +118,11 @@ function OverviewLoading() {
  */
 export function AppSetupEntry({
   organizationId,
+  organizationSlug,
   onLeft,
 }: {
   organizationId: string;
+  organizationSlug: string;
   onLeft: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -138,12 +144,16 @@ export function AppSetupEntry({
     <AuthLayout width="xl">
       <PageHeader
         title="Set up your apps"
-        description="Paseo Hub talks to GitHub, Slack, Discord, and Linear through apps you create and own. Set up the ones you want to use."
+        description="Paseo Hub talks to GitHub, Slack, Discord, Linear, and GitLab through apps you create and own. Set up the ones you want to use."
         focusOnMount
       />
       <div className="grid min-w-0 gap-6">
         {failed ? <ExitFailure error={finish.data} onRetry={done} /> : null}
-        <ProviderApplications surface="appSetup" organizationId={organizationId} />
+        <ProviderApplications
+          surface="appSetup"
+          organizationId={organizationId}
+          organizationSlug={organizationSlug}
+        />
         <FormActions pinned>
           <Button
             variant={connected > 0 ? "default" : "ghost"}
@@ -187,9 +197,13 @@ export function AppsPanel() {
     <>
       <PageHeader
         title="Apps"
-        description="The GitHub, Slack, Discord, and Linear apps Hub uses to reach your workspaces."
+        description="The GitHub, Slack, Discord, Linear, and GitLab apps Hub uses to reach your workspaces."
       />
-      <ProviderApplications surface="apps" organizationId={account.organization.id} />
+      <ProviderApplications
+        surface="apps"
+        organizationId={account.organization.id}
+        organizationSlug={account.organization.slug}
+      />
     </>
   );
 }
