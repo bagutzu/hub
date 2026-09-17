@@ -264,6 +264,8 @@ export function ProviderSection({
             dropped on the floor. */}
         <ResultRegion ref={result} guide={activeGuide} outcome={outcome} />
         {guide.provider === "gitlab" && attempt !== undefined ? (
+          // The grant is authorized; the only thing left is the group it covers. The setup
+          // steps and the credential form would only say "start over" to someone mid-way.
           <GitlabNamespacePicker
             organizationSlug={organizationSlug}
             attempt={attempt}
@@ -273,28 +275,31 @@ export function ProviderSection({
               void queryClient.invalidateQueries({ queryKey: ["provider-applications"] });
             }}
           />
-        ) : null}
-        {guide.provider === "slack" &&
-        (phase === "guiding" || phase === "replacing" || phase === "blocked") ? (
-          <SlackTransportChoice value={slackTransport} onChange={setSlackTransport} />
-        ) : null}
-        <SectionBody
-          guide={activeGuide}
-          view={view}
-          origin={callbackOrigin}
-          phase={phase}
-          form={form}
-          busy={busy}
-          connecting={connect.isPending || leaving}
-          replaceRef={replace}
-          onConnect={startConnection}
-          onRetry={() => retryDelivery.mutate({})}
-          onReplace={() => {
-            setErrors({});
-            setOutcome(undefined);
-            setReplacing(true);
-          }}
-        />
+        ) : (
+          <>
+            {guide.provider === "slack" &&
+            (phase === "guiding" || phase === "replacing" || phase === "blocked") ? (
+              <SlackTransportChoice value={slackTransport} onChange={setSlackTransport} />
+            ) : null}
+            <SectionBody
+              guide={activeGuide}
+              view={view}
+              origin={callbackOrigin}
+              phase={phase}
+              form={form}
+              busy={busy}
+              connecting={connect.isPending || leaving}
+              replaceRef={replace}
+              onConnect={startConnection}
+              onRetry={() => retryDelivery.mutate({})}
+              onReplace={() => {
+                setErrors({});
+                setOutcome(undefined);
+                setReplacing(true);
+              }}
+            />
+          </>
+        )}
       </div>
     </Disclosure>
   );
