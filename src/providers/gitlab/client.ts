@@ -36,6 +36,11 @@ const GroupSchema = z.object({
   name: z.string().min(1),
 });
 
+const NamespaceSchema = z.object({
+  id: z.number().int().positive(),
+  kind: z.string(),
+});
+
 const ProjectSchema = z.object({
   id: z.number().int().positive(),
   path_with_namespace: z.string().min(1),
@@ -185,7 +190,9 @@ export function createGitlabConnectionClient(options: {
           id: user.id,
           username: user.username,
           name: user.name,
-          namespaceId: user.namespace_id ?? null,
+          namespaceId:
+            user.namespace_id ??
+            (await personalNamespaceId(request, base, token.accessToken, user.username)),
         },
       };
     },
@@ -273,6 +280,19 @@ export function createGitlabApiClient(options: {
       );
     },
   };
+}
+
+/** gitlab.com leaves `namespace_id` out of `/user`; the personal namespace sits at the username. */
+async function personalNamespaceId(
+  request: typeof fetch,
+  base: string,
+  accessToken: string,
+  username: string,
+): Promise<number | null> {
+  const namespace = NamespaceSchema.parse(
+    await api(request, base, accessToken, `/namespaces/${encodeURIComponent(username)}`),
+  );
+  return namespace.kind === "user" ? namespace.id : null;
 }
 
 async function listNamespaces(

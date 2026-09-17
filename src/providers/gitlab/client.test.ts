@@ -105,6 +105,23 @@ describe("GitLab connection client", () => {
     });
   });
 
+  it("looks the personal namespace up by username when the user endpoint omits it", async () => {
+    const { namespace_id: _omitted, ...bareUser } = USER;
+    const { request, calls } = fakeFetch(({ url }) => {
+      if (url.pathname === "/oauth/token") return json({ access_token: "access", scope: "api" });
+      if (url.pathname === "/api/v4/user") return json(bareUser);
+      if (url.pathname === "/api/v4/namespaces/acme-bot") {
+        return json({ id: 71, kind: "user", full_path: "acme-bot" });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    const grant = await client(request).exchangeCode({ code: "code-1", verifier: "verifier-1" });
+
+    assert.equal(grant.user.namespaceId, 71);
+    assert.equal(new Headers(calls[2]?.init?.headers).get("authorization"), "Bearer access");
+  });
+
   it("refreshes with the refresh token grant and revokes through the client credentials", async () => {
     const { request, calls } = fakeFetch(({ url }) =>
       url.pathname === "/oauth/token"
