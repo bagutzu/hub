@@ -502,7 +502,13 @@ export class AppSetupSurface {
   async chooseGitlabNamespace(fullPath: string): Promise<void> {
     const body = this.gitlab.body();
     await body.getByRole("combobox", { name: "Group or namespace" }).click();
-    await this.page.getByRole("option", { name: fullPath, exact: false }).click();
+    // The option's accessible name is the path followed by the group's name, so anchor on the
+    // path and its trailing space: "acme" must not also match "acme-bot".
+    await this.page
+      .getByRole("option", {
+        name: new RegExp(`^${fullPath.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")} `, "u"),
+      })
+      .click();
     await body.getByRole("button", { name: `Connect ${fullPath}`, exact: true }).click();
   }
 
