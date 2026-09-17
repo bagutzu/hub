@@ -2,6 +2,7 @@ import { expect } from "@playwright/test";
 import { test } from "./app.js";
 import {
   GITHUB_EVENT_CREDENTIALS,
+  GITLAB_EVENT_CREDENTIALS,
   SLACK_WEBHOOK_CREDENTIALS,
   WORKING_CREDENTIALS,
 } from "./helpers/apps.js";
@@ -693,7 +694,7 @@ test("the operator finishes, then manages the same apps from the account menu", 
     https: true,
   });
   try {
-    const { surface, page } = session;
+    const { surface, page, origin } = session;
     await surface.github.expand();
     await surface.github.fillWorkingCredentials();
     await surface.github.save();
@@ -724,7 +725,24 @@ test("the operator finishes, then manages the same apps from the account menu", 
     });
 
     await surface.gitlab.expand();
-    await surface.gitlab.fillWorkingCredentials();
+    await expect(
+      surface.gitlab.body().getByRole("heading", { name: "Event triggers" }),
+    ).toBeVisible();
+    await surface.gitlab.expectGeneratedUrl(
+      "Webhook URL",
+      `${origin}/api/integrations/gitlab/events`,
+    );
+    // The first list is the application's scope; the hook's events are the second.
+    expect(await surface.gitlab.subscribedEvents(1)).toEqual([
+      "issues_events",
+      "confidential_issues_events",
+      "note_events",
+      "confidential_note_events",
+      "merge_requests_events",
+      "push_events",
+    ]);
+    await surface.shoot(SHOTS, "apps-11b-gitlab-expanded-https.desktop");
+    await surface.gitlab.fill({ ...WORKING_CREDENTIALS.GitLab, ...GITLAB_EVENT_CREDENTIALS });
     await surface.gitlab.save();
     await expect(page.getByRole("heading", { name: "Install Paseo in Acme" })).toBeVisible();
     await page.getByRole("link", { name: "Accept installation" }).click();
@@ -735,8 +753,19 @@ test("the operator finishes, then manages the same apps from the account menu", 
     await surface.shoot(SHOTS, "apps-11c-gitlab-choose-group.desktop");
     await surface.chooseGitlabNamespace("acme");
     await surface.gitlab.expectStatus("Connected");
-    await surface.gitlab.expectSummary({ Application: "GitLab app", Groups: "acme" });
+    await surface.gitlab.expectSummary({
+      Application: "GitLab app",
+      Groups: "acme",
+      Events: "Waiting for the first event",
+    });
     await surface.shoot(SHOTS, "apps-11d-gitlab-connected.desktop");
+
+    // Only a correctly signed delivery for a project the connection covers changes that.
+    await session.seedSignedDelivery("gitlab");
+    await page.reload();
+    await surface.gitlab.expand();
+    await surface.gitlab.expectSummary({ Events: /^Last received/u });
+    await surface.shoot(SHOTS, "apps-11e-gitlab-receiving-events.desktop");
 
     await surface.collapseAll();
     await surface.shoot(SHOTS, "apps-12-all-four-connected.desktop");
