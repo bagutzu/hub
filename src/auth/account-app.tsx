@@ -72,7 +72,13 @@ function AccountApplication() {
   if (state.status === "passwordChangeRequired")
     return <PasswordChangeEntry account={state.account} />;
   if (state.status === "appSetupRequired") {
-    return <AppSetupEntry organizationId={state.organization.id} onLeft={enterHandoff} />;
+    return (
+      <AppSetupEntry
+        organizationId={state.organization.id}
+        organizationSlug={state.organization.slug}
+        onLeft={enterHandoff}
+      />
+    );
   }
   if (state.invitationUnavailable === true) {
     return <UnavailableInvitation message="This invitation is unavailable." />;

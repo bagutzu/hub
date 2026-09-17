@@ -14,7 +14,7 @@ export type WorkflowDeadlineKind = "step_hard" | "step_idle" | "whole_run";
 export interface ProviderEventReceiptRecord {
   id: string;
   organizationId: string;
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "gitlab" | "manual" | "schedule";
   connectionId: string | null;
   resourceId: string | null;
   deliveryId: string;
@@ -262,6 +262,7 @@ export interface OrganizationConnectionUsage {
   discord: DiscordConnectionRecord[];
   slack: SlackConnectionRecord[];
   linear: LinearConnectionRecord[];
+  gitlab: GitlabConnectionRecord[];
 }
 
 export interface GitHubRepositoryRecord {
@@ -356,14 +357,16 @@ export interface PendingProjectTriggerMigration {
   revision: ProjectConfigurationRevisionRecord;
 }
 
-export type ConnectionProvider = "github" | "discord" | "slack" | "linear";
+export type ConnectionProvider = "github" | "discord" | "slack" | "linear" | "gitlab";
 
 export type ConnectionAttemptPhase =
   | "github_setup"
   | "github_user_authorization"
   | "discord_authorization"
   | "slack_authorization"
-  | "linear_authorization";
+  | "linear_authorization"
+  | "gitlab_authorization"
+  | "gitlab_namespace_selection";
 
 export interface ConnectionAccountAccess {
   sessionId: string;
@@ -386,6 +389,7 @@ export interface ConnectionAttemptRecord {
   sessionId: string;
   candidateExternalId: string | null;
   pkceVerifier: string | null;
+  candidateGrant: unknown;
   configurationVersion: number;
   providerApplicationId: string | null;
   callbackOrigin: string;
@@ -451,9 +455,46 @@ export interface LinearConnectionRecord {
   scopes: string[];
 }
 
+export interface GitlabNamespace {
+  id: number;
+  kind: "group" | "user";
+  fullPath: string;
+  name: string;
+}
+
+export interface GitlabProjectRecord {
+  id: string;
+  organizationId: string;
+  connectionId: string;
+  projectId: number;
+  pathWithNamespace: string;
+  defaultBranch: string | null;
+  webUrl: string;
+}
+
+export type GitlabProjectInput = Pick<
+  GitlabProjectRecord,
+  "projectId" | "pathWithNamespace" | "defaultBranch" | "webUrl"
+>;
+
+export interface GitlabConnectionRecord {
+  id: string;
+  organizationId: string;
+  slug: string;
+  providerApplicationId: string | null;
+  namespace: GitlabNamespace;
+  user: { id: number; username: string; name: string };
+  accessToken: string;
+  refreshToken: string | null;
+  accessTokenExpiresAt: Date | null;
+  scopes: string[];
+}
+
 export interface StartConnectionAttemptInput {
   provider: ConnectionProvider;
   stateVerifier: string;
+  /** Set by providers that carry PKCE from the first leg; stored until the callback consumes it. */
+  pkceVerifier?: string;
   access: ConnectionStartAuthority;
   lifetimeMinutes: number;
   configurationVersion: number;
@@ -474,6 +515,11 @@ export interface AdvanceGitHubConnectionAttemptInput extends ReadConnectionAttem
   nextStateVerifier: string;
   installationId: number;
   pkceVerifier: string;
+}
+
+export interface AdvanceGitlabConnectionAttemptInput extends ReadConnectionAttemptInput {
+  nextStateVerifier: string;
+  grant: unknown;
 }
 
 export interface BindGitHubConnectionInput extends ReadConnectionAttemptInput {
@@ -529,6 +575,38 @@ export interface CompleteLinearProviderApplicationInput extends BindLinearConnec
   };
 }
 
+export interface BindGitlabConnectionInput extends ReadConnectionAttemptInput {
+  providerApplicationId: string;
+  namespace: GitlabNamespace;
+  user: { id: number; username: string; name: string };
+  accessToken: string;
+  refreshToken?: string | null;
+  accessTokenExpiresAt?: Date | null;
+  scopes: string[];
+  projects: readonly GitlabProjectInput[];
+}
+
+export interface CompleteGitlabProviderApplicationInput extends BindGitlabConnectionInput {
+  providerConfiguration: {
+    configuration: unknown;
+    identity: { id: string };
+    expectedVersion: number | undefined;
+    updatedByUserId: string;
+  };
+}
+
+export interface GitlabConnectionTokenUpdate {
+  accessToken: string;
+  refreshToken?: string | null;
+  accessTokenExpiresAt?: Date | null;
+  scopes?: string[];
+}
+
+export type GitlabConnectionRefreshOperation<T> = (
+  connection: GitlabConnectionRecord | undefined,
+  updateTokens: (input: GitlabConnectionTokenUpdate) => Promise<void>,
+) => Promise<T>;
+
 export interface UpdateLinearConnectionTokensInput {
   connectionId: string;
   accessToken: string;
@@ -555,6 +633,11 @@ export type DisconnectConnectionResult =
   | {
       provider: "linear";
       linearOrganizationId: string | undefined;
+      accessToken: string | undefined;
+    }
+  | {
+      provider: "gitlab";
+      namespaceId: number | undefined;
       accessToken: string | undefined;
     };
 
@@ -1574,6 +1657,25 @@ export interface Database {
     linearOrganizationId: string,
     operation: LinearConnectionRefreshOperation<T>,
   ): Promise<T>;
+  advanceGitlabConnectionAttempt(input: AdvanceGitlabConnectionAttemptInput): Promise<void>;
+  bindGitlabConnection(input: BindGitlabConnectionInput): Promise<void>;
+  completeGitlabProviderApplication(input: CompleteGitlabProviderApplicationInput): Promise<void>;
+  /** The GitLab counterpart of `withLinearConnectionRefresh`, keyed by the namespace ID. */
+  withGitlabConnectionRefresh<T>(
+    namespaceId: number,
+    operation: GitlabConnectionRefreshOperation<T>,
+  ): Promise<T>;
+  findGitlabConnection(namespaceId: number): Promise<GitlabConnectionRecord | undefined>;
+  findGitlabConnectionForOrganization(
+    organizationId: string,
+    connectionId: string,
+  ): Promise<GitlabConnectionRecord | undefined>;
+  listGitlabProjects(organizationId: string, connectionId: string): Promise<GitlabProjectRecord[]>;
+  replaceGitlabProjects(
+    organizationId: string,
+    connectionId: string,
+    projects: readonly GitlabProjectInput[],
+  ): Promise<void>;
   disconnectConnection(
     provider: ConnectionProvider,
     connectionId: string,

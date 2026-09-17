@@ -32,7 +32,7 @@ export type AgentExecutionStatus = (typeof AGENT_EXECUTION_STATUSES)[number];
 export const PROJECT_STATUSES = ["active", "archived"] as const;
 export const CONFIGURATION_SOURCE_KINDS = ["github", "manual"] as const;
 export const TRIGGER_FORMATS = ["single_run", "legacy_multistep"] as const;
-export const CONNECTION_PROVIDERS = ["github", "slack", "discord", "linear"] as const;
+export const CONNECTION_PROVIDERS = ["github", "slack", "discord", "linear", "gitlab"] as const;
 
 export type MachineSource =
   | { kind: "manual"; userId?: string }
@@ -88,7 +88,7 @@ export const providerEventReceipts = pgTable(
     ),
     check(
       "provider_event_receipts_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'manual', 'schedule')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'gitlab', 'manual', 'schedule')`,
     ),
   ],
 );
@@ -256,7 +256,7 @@ export const projectTriggerRoutes = pgTable(
     }).onDelete("cascade"),
     check(
       "project_trigger_routes_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'gitlab')`,
     ),
   ],
 );
@@ -861,7 +861,7 @@ export const organizationConnectionAttempts = pgTable(
   "organization_connection_attempts",
   {
     id: uuid().defaultRandom().primaryKey(),
-    provider: text().$type<"github" | "discord" | "slack" | "linear">().notNull(),
+    provider: text().$type<"github" | "discord" | "slack" | "linear" | "gitlab">().notNull(),
     phase: text()
       .$type<
         | "github_setup"
@@ -869,6 +869,8 @@ export const organizationConnectionAttempts = pgTable(
         | "discord_authorization"
         | "slack_authorization"
         | "linear_authorization"
+        | "gitlab_authorization"
+        | "gitlab_namespace_selection"
       >()
       .notNull(),
     stateVerifier: text("state_verifier").notNull().unique(),
@@ -884,6 +886,8 @@ export const organizationConnectionAttempts = pgTable(
       .references(() => sessions.id, { onDelete: "cascade" }),
     candidateExternalId: text("candidate_external_id"),
     pkceVerifier: text("pkce_verifier"),
+    /** A GitLab grant waiting for its namespace choice. Cleared with the PKCE secret on consumption. */
+    candidateGrant: jsonb("candidate_grant"),
     configurationVersion: integer("configuration_version").notNull(),
     providerApplicationId: text("provider_application_id"),
     callbackOrigin: text("callback_origin").notNull(),
@@ -898,11 +902,11 @@ export const organizationConnectionAttempts = pgTable(
     index("organization_connection_attempts_expiry_idx").on(table.expiresAt),
     check(
       "organization_connection_attempts_provider_check",
-      sql`${table.provider} in ('github', 'discord', 'slack', 'linear')`,
+      sql`${table.provider} in ('github', 'discord', 'slack', 'linear', 'gitlab')`,
     ),
     check(
       "organization_connection_attempts_phase_check",
-      sql`${table.phase} in ('github_setup', 'github_user_authorization', 'discord_authorization', 'slack_authorization', 'linear_authorization')`,
+      sql`${table.phase} in ('github_setup', 'github_user_authorization', 'discord_authorization', 'slack_authorization', 'linear_authorization', 'gitlab_authorization', 'gitlab_namespace_selection')`,
     ),
     check(
       "organization_connection_attempts_shape_check",
@@ -910,7 +914,9 @@ export const organizationConnectionAttempts = pgTable(
         or (${table.phase} = 'github_user_authorization' and ${table.provider} = 'github' and ${table.candidateExternalId} is not null and (${table.pkceVerifier} is not null or ${table.consumedAt} is not null))
         or (${table.phase} = 'discord_authorization' and ${table.provider} = 'discord' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)
         or (${table.phase} = 'slack_authorization' and ${table.provider} = 'slack' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)
-        or (${table.phase} = 'linear_authorization' and ${table.provider} = 'linear' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)`,
+        or (${table.phase} = 'linear_authorization' and ${table.provider} = 'linear' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)
+        or (${table.phase} = 'gitlab_authorization' and ${table.provider} = 'gitlab' and ${table.candidateExternalId} is null and ${table.candidateGrant} is null and (${table.pkceVerifier} is not null or ${table.consumedAt} is not null))
+        or (${table.phase} = 'gitlab_namespace_selection' and ${table.provider} = 'gitlab' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null and (${table.candidateGrant} is not null or ${table.consumedAt} is not null))`,
     ),
   ],
 );
@@ -1062,6 +1068,76 @@ export const linearConnections = pgTable(
       table.organizationId,
       table.linearOrganizationId,
     ),
+  ],
+);
+
+/**
+ * One OAuth grant per GitLab group or personal namespace. GitLab has no bot identity on every
+ * tier, so the grant is the connecting user's; the namespace is what the connection covers.
+ */
+export const gitlabConnections = pgTable(
+  "gitlab_connections",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    namespaceId: bigint("namespace_id", { mode: "number" }).notNull().unique(),
+    namespaceKind: text("namespace_kind").$type<"group" | "user">().notNull(),
+    namespaceFullPath: text("namespace_full_path").notNull(),
+    namespaceName: text("namespace_name").notNull(),
+    providerApplicationId: text("provider_application_id"),
+    slug: text().notNull(),
+    gitlabUserId: bigint("gitlab_user_id", { mode: "number" }).notNull(),
+    gitlabUsername: text("gitlab_username").notNull(),
+    gitlabUserName: text("gitlab_user_name").notNull(),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+    scopes: jsonb()
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    connectedByUserId: text("connected_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("gitlab_connections_id_organization_unique").on(table.id, table.organizationId),
+    uniqueIndex("gitlab_connections_organization_slug_unique").on(table.organizationId, table.slug),
+    check(
+      "gitlab_connections_namespace_kind_check",
+      sql`${table.namespaceKind} in ('group', 'user')`,
+    ),
+  ],
+);
+
+export const gitlabProjects = pgTable(
+  "gitlab_projects",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    projectId: bigint("project_id", { mode: "number" }).notNull(),
+    pathWithNamespace: text("path_with_namespace").notNull(),
+    defaultBranch: text("default_branch"),
+    webUrl: text("web_url").notNull(),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("gitlab_projects_connection_project_unique").on(
+      table.connectionId,
+      table.projectId,
+    ),
+    index("gitlab_projects_organization_project_idx").on(table.organizationId, table.projectId),
+    foreignKey({
+      columns: [table.connectionId, table.organizationId],
+      foreignColumns: [gitlabConnections.id, gitlabConnections.organizationId],
+      name: "gitlab_projects_connection_organization_fk",
+    }).onDelete("cascade"),
   ],
 );
 
@@ -1258,7 +1334,7 @@ export const runtimeProviderConfiguration = pgTable(
   (table) => [
     check(
       "runtime_provider_configuration_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'gitlab')`,
     ),
     check("runtime_provider_configuration_version_check", sql`${table.version} > 0`),
   ],
@@ -1275,7 +1351,7 @@ export const runtimeProviderActivations = pgTable(
   (table) => [
     check(
       "runtime_provider_activation_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'gitlab')`,
     ),
     check("runtime_provider_activation_version_check", sql`${table.configurationVersion} >= 0`),
   ],

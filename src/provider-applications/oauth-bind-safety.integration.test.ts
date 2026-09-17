@@ -36,7 +36,7 @@ describe("provider application OAuth bind authority", () => {
       const fixture = await databaseFixture(engine);
       try {
         await seedAuthority(fixture.bundle);
-        for (const provider of ["github", "slack", "discord", "linear"] as const) {
+        for (const provider of ["github", "slack", "discord", "linear", "gitlab"] as const) {
           await rejectsStoredReplacement(fixture.bundle, provider);
           await resetProvider(fixture.bundle, provider);
           await serializesReplacementRace(fixture.bundle, provider);
@@ -238,6 +238,7 @@ function callbackPhase(provider: Provider) {
   if (provider === "github") return "github_user_authorization" as const;
   if (provider === "slack") return "slack_authorization" as const;
   if (provider === "linear") return "linear_authorization" as const;
+  if (provider === "gitlab") return "gitlab_namespace_selection" as const;
   return "discord_authorization" as const;
 }
 
@@ -252,6 +253,7 @@ async function startAttempt(
   await database.startConnectionAttempt({
     provider,
     stateVerifier: initialState,
+    ...(provider === "gitlab" ? { pkceVerifier: "pkce" } : {}),
     access: START_ACCESS,
     lifetimeMinutes: 10,
     configurationVersion,
@@ -261,8 +263,18 @@ async function startAttempt(
     expectedConfigurationVersion: null,
     activateConfiguration: false,
   });
-  if (provider !== "github") return initialState;
   const callbackState = `${name}-callback`;
+  if (provider === "gitlab") {
+    await database.advanceGitlabConnectionAttempt({
+      stateVerifier: initialState,
+      phase: "gitlab_authorization",
+      access: CALLBACK_ACCESS,
+      nextStateVerifier: callbackState,
+      grant: { accessToken: "gitlab-token" },
+    });
+    return callbackState;
+  }
+  if (provider !== "github") return initialState;
   await database.advanceGitHubConnectionAttempt({
     stateVerifier: initialState,
     phase: "github_setup",
@@ -313,6 +325,18 @@ function bind(
       accessToken: "linear-token",
       refreshToken: "linear-refresh-token",
       scopes: ["read", "comments:create"],
+    });
+  }
+  if (provider === "gitlab") {
+    return database.bindGitlabConnection({
+      ...shared,
+      phase: "gitlab_namespace_selection",
+      namespace: { id: 42, kind: "group", fullPath: "acme", name: "Acme" },
+      user: { id: 7, username: "acme-bot", name: "Acme Bot" },
+      accessToken: "gitlab-token",
+      refreshToken: "gitlab-refresh-token",
+      scopes: ["api"],
+      projects: [],
     });
   }
   return database.bindDiscordConnection({
@@ -391,6 +415,13 @@ function application(provider: Provider, suffix: string) {
       clientSecret: `linear-secret-${suffix}`,
       webhookSecret: `linear-webhook-${suffix}`,
     };
+  } else if (provider === "gitlab") {
+    configuration = {
+      provider,
+      url: "https://gitlab.example.test",
+      clientId: `gitlab-client-${suffix}`,
+      clientSecret: `gitlab-secret-${suffix}`,
+    };
   } else {
     configuration = {
       provider,
@@ -416,6 +447,9 @@ function identity(configuration: ProviderApplicationConfiguration): ProviderAppl
   }
   if (configuration.provider === "linear") {
     return { provider: "linear", id: configuration.clientId, name: configuration.clientId };
+  }
+  if (configuration.provider === "gitlab") {
+    return { provider: "gitlab", id: configuration.clientId, name: configuration.clientId };
   }
   return {
     provider: "discord",

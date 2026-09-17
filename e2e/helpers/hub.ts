@@ -95,7 +95,7 @@ export interface BuiltApplicationOptions {
   /** Operator-managed provider applications, starting from nothing configured. */
   providerApplications?: boolean;
   /** Providers the instance environment configures, which the surface must render read-only. */
-  environmentApps?: readonly ("github" | "slack" | "discord" | "linear")[];
+  environmentApps?: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[];
   /** Run the built app with direct local TLS for provider journeys that require real HTTPS. */
   https?: boolean;
   /** Terminate HTTPS at a trusted proxy and intentionally omit PASEO_HUB_APP_URL. */
@@ -357,7 +357,7 @@ export class PaseoHub {
   async openAppSetup(input: {
     account: Account;
     providerScenario?: BrowserProviderScenario;
-    environmentApps?: readonly ("github" | "slack" | "discord" | "linear")[];
+    environmentApps?: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[];
     https?: boolean;
     reverseProxy?: boolean;
   }): Promise<AppSetupSession> {
@@ -5233,7 +5233,7 @@ export interface AppSetupSession {
   /** Reaches Apps the way an operator does after onboarding: through the account menu. */
   navigateToApps(): Promise<void>;
   returnFromProvider(
-    provider: "github" | "slack" | "discord" | "linear",
+    provider: "github" | "slack" | "discord" | "linear" | "gitlab",
     result: string,
   ): Promise<void>;
   /** A correctly-signed inbound delivery — the only thing that proves a webhook secret. */

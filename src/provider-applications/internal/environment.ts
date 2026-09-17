@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { DEFAULT_GITLAB_URL, normalizeGitlabUrl } from "../../providers/gitlab/client.js";
 import type { Provider, ProviderApplicationConfiguration } from "../index.js";
 
 /** @package */
@@ -9,11 +10,13 @@ export async function readProviderApplicationEnvironment(
   const slack = slackEnvironment(environment);
   const discord = discordEnvironment(environment);
   const linear = linearEnvironment(environment);
+  const gitlab = gitlabEnvironment(environment);
   return {
     ...(github === undefined ? {} : { github }),
     ...(slack === undefined ? {} : { slack }),
     ...(discord === undefined ? {} : { discord }),
     ...(linear === undefined ? {} : { linear }),
+    ...(gitlab === undefined ? {} : { gitlab }),
   };
 }
 
@@ -131,6 +134,26 @@ function linearEnvironment(
     );
   }
   return { provider: "linear", clientId, clientSecret, webhookSecret };
+}
+
+function gitlabEnvironment(
+  environment: Record<string, string | undefined>,
+): ProviderApplicationConfiguration | undefined {
+  const url = nonEmpty(environment["GITLAB_URL"]);
+  const clientId = nonEmpty(environment["GITLAB_CLIENT_ID"]);
+  const clientSecret = nonEmpty(environment["GITLAB_CLIENT_SECRET"]);
+  if (url === undefined && clientId === undefined && clientSecret === undefined) return undefined;
+  if (clientId === undefined || clientSecret === undefined) {
+    throw new Error(
+      "GitLab environment configuration requires GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET.",
+    );
+  }
+  return {
+    provider: "gitlab",
+    url: normalizeGitlabUrl(url ?? DEFAULT_GITLAB_URL),
+    clientId,
+    clientSecret,
+  };
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

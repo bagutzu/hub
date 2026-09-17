@@ -58,7 +58,12 @@ import type {
   AdvanceGitHubConnectionAttemptInput,
   BindDiscordConnectionInput,
   BindGitHubConnectionInput,
+  AdvanceGitlabConnectionAttemptInput,
+  BindGitlabConnectionInput,
   BindLinearConnectionInput,
+  CompleteGitlabProviderApplicationInput,
+  GitlabConnectionRefreshOperation,
+  GitlabProjectInput,
   BindSlackConnectionInput,
   CompleteLinearProviderApplicationInput,
   CompleteSlackProviderApplicationInput,
@@ -3862,7 +3867,7 @@ class PgDatabase implements Database {
        order by connection.account_login, connection.id`,
       [organizationId],
     );
-    const [discord, slack, linear] = await Promise.all([
+    const [discord, slack, linear, gitlab] = await Promise.all([
       query<{
         id: string;
         organization_id: string;
@@ -3916,6 +3921,31 @@ class PgDatabase implements Database {
          order by linear_organization_name, id`,
         [organizationId],
       ),
+      query<{
+        id: string;
+        organization_id: string;
+        slug: string;
+        namespace_id: string;
+        namespace_kind: "group" | "user";
+        namespace_full_path: string;
+        namespace_name: string;
+        gitlab_user_id: string;
+        gitlab_username: string;
+        gitlab_user_name: string;
+        access_token: string;
+        refresh_token: string | null;
+        access_token_expires_at: Date | null;
+        scopes: unknown;
+        provider_application_id: string | null;
+      }>(
+        this.pool,
+        `select id, organization_id, slug, namespace_id, namespace_kind, namespace_full_path,
+                namespace_name, gitlab_user_id, gitlab_username, gitlab_user_name, access_token,
+                refresh_token, access_token_expires_at, scopes, provider_application_id
+         from gitlab_connections where organization_id = $1
+         order by namespace_full_path, id`,
+        [organizationId],
+      ),
     ]);
     return {
       github: github.rows.map((row) => ({
@@ -3960,6 +3990,27 @@ class PgDatabase implements Database {
         accessTokenExpiresAt: row.access_token_expires_at,
         scopes: stringArray(row.scopes),
         providerApplicationId: row.provider_application_id,
+      })),
+      gitlab: gitlab.rows.map((row) => ({
+        id: row.id,
+        organizationId: row.organization_id,
+        slug: row.slug,
+        providerApplicationId: row.provider_application_id,
+        namespace: {
+          id: Number(row.namespace_id),
+          kind: row.namespace_kind,
+          fullPath: row.namespace_full_path,
+          name: row.namespace_name,
+        },
+        user: {
+          id: Number(row.gitlab_user_id),
+          username: row.gitlab_username,
+          name: row.gitlab_user_name,
+        },
+        accessToken: row.access_token,
+        refreshToken: row.refresh_token,
+        accessTokenExpiresAt: row.access_token_expires_at,
+        scopes: stringArray(row.scopes),
       })),
     };
   }
@@ -4185,6 +4236,45 @@ class PgDatabase implements Database {
     operation: LinearConnectionRefreshOperation<T>,
   ): Promise<T> {
     return this.connections.withLinearRefresh(linearOrganizationId, operation);
+  }
+
+  advanceGitlabConnectionAttempt(input: AdvanceGitlabConnectionAttemptInput): Promise<void> {
+    return this.connections.advanceGitlabAttempt(input);
+  }
+
+  bindGitlabConnection(input: BindGitlabConnectionInput): Promise<void> {
+    return this.connections.bindGitlab(input);
+  }
+
+  completeGitlabProviderApplication(input: CompleteGitlabProviderApplicationInput): Promise<void> {
+    return this.connections.completeGitlabProviderApplication(input);
+  }
+
+  withGitlabConnectionRefresh<T>(
+    namespaceId: number,
+    operation: GitlabConnectionRefreshOperation<T>,
+  ): Promise<T> {
+    return this.connections.withGitlabRefresh(namespaceId, operation);
+  }
+
+  findGitlabConnection(namespaceId: number) {
+    return this.connections.findGitlab(namespaceId);
+  }
+
+  findGitlabConnectionForOrganization(organizationId: string, connectionId: string) {
+    return this.connections.findGitlabForOrganization(organizationId, connectionId);
+  }
+
+  listGitlabProjects(organizationId: string, connectionId: string) {
+    return this.connections.listGitlabProjects(organizationId, connectionId);
+  }
+
+  replaceGitlabProjects(
+    organizationId: string,
+    connectionId: string,
+    projects: readonly GitlabProjectInput[],
+  ): Promise<void> {
+    return this.connections.replaceGitlabProjects(organizationId, connectionId, projects);
   }
 
   disconnectConnection(

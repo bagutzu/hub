@@ -678,6 +678,9 @@ function providerConfiguration(provider: Provider, id: string): ProviderApplicat
   if (provider === "linear") {
     return { provider, clientId: id, clientSecret: "secret", webhookSecret: "webhook" };
   }
+  if (provider === "gitlab") {
+    return { provider, url: "https://gitlab.test", clientId: id, clientSecret: "secret" };
+  }
   return { provider, applicationId: id, clientSecret: "secret", botToken: "token" };
 }
 
@@ -689,7 +692,9 @@ function providerIdentity(provider: Provider, id: string): ProviderApplicationId
 function providerConfigurationId(configuration: ProviderApplicationConfiguration): string {
   if (configuration.provider === "github") return configuration.appId;
   if (configuration.provider === "slack") return configuration.appId;
-  if (configuration.provider === "linear") return configuration.clientId;
+  if (configuration.provider === "linear" || configuration.provider === "gitlab") {
+    return configuration.clientId;
+  }
   return configuration.applicationId;
 }
 
