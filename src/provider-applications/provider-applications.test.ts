@@ -37,6 +37,12 @@ const linearConfiguration: ProviderApplicationConfiguration = {
   clientSecret: "linear-client-secret",
   webhookSecret: "linear-webhook-secret",
 };
+const gitlabConfiguration: ProviderApplicationConfiguration = {
+  provider: "gitlab",
+  url: "https://gitlab.com",
+  clientId: "gitlab-client",
+  clientSecret: "gitlab-client-secret",
+};
 
 describe("provider applications", () => {
   it("reveals no provider state to a signed-in non-operator", async () => {
@@ -382,6 +388,35 @@ describe("provider applications", () => {
 
     assert.equal(fixture.store.values.get("linear")?.version, 1);
     assert.notEqual(fixture.runtime.active("linear"), undefined);
+  });
+
+  it("persists and activates GitLab only after the namespace choice binds the grant", async () => {
+    const fixture = createFixture();
+
+    const result = await fixture.applications.verifyAndSave(
+      request("POST", "http://hub.test"),
+      "gitlab",
+      gitlabConfiguration,
+    );
+
+    assert.deepEqual(result, {
+      status: "continuing",
+      provider: "gitlab",
+      url: "https://slack.test/install",
+    });
+    assert.equal(fixture.store.values.has("gitlab"), false);
+    assert.equal(fixture.runtime.active("gitlab"), undefined);
+
+    await fixture.runtime.completeGitlab({
+      configuration: gitlabConfiguration,
+      expectedConfigurationVersion: undefined,
+      callbackOrigin: "http://hub.test",
+      userId: "operator",
+      binding: gitlabBinding(),
+    });
+
+    assert.equal(fixture.store.values.get("gitlab")?.version, 1);
+    assert.notEqual(fixture.runtime.active("gitlab"), undefined);
   });
 
   it("requires HTTPS before starting a Linear configuration", async () => {
@@ -758,6 +793,18 @@ class MemoryStore implements ProviderApplicationStore {
     });
   }
 
+  async completeGitlabInstallation(
+    input: Parameters<ProviderApplicationStore["completeGitlabInstallation"]>[0],
+  ) {
+    await this.save({
+      provider: "gitlab",
+      configuration: input.configuration,
+      identity: input.identity,
+      expectedVersion: input.expectedVersion,
+      updatedByUserId: input.updatedByUserId,
+    });
+  }
+
   completeSlackSocketApplication(
     input: Parameters<ProviderApplicationStore["completeSlackSocketApplication"]>[0],
   ) {
@@ -784,6 +831,9 @@ class BlockingRuntime implements ProviderRuntimeOwner {
   private linearInstallationHandler:
     | Parameters<NonNullable<ProviderRuntimeOwner["onLinearInstallation"]>>[0]
     | undefined;
+  private gitlabInstallationHandler:
+    | Parameters<NonNullable<ProviderRuntimeOwner["onGitlabInstallation"]>>[0]
+    | undefined;
 
   onSlackInstallation(
     handler: Parameters<NonNullable<ProviderRuntimeOwner["onSlackInstallation"]>>[0],
@@ -809,6 +859,19 @@ class BlockingRuntime implements ProviderRuntimeOwner {
   ) {
     if (this.linearInstallationHandler === undefined) throw new Error("handler unavailable");
     return this.linearInstallationHandler(input);
+  }
+
+  onGitlabInstallation(
+    handler: Parameters<NonNullable<ProviderRuntimeOwner["onGitlabInstallation"]>>[0],
+  ): void {
+    this.gitlabInstallationHandler = handler;
+  }
+
+  completeGitlab(
+    input: Parameters<Parameters<NonNullable<ProviderRuntimeOwner["onGitlabInstallation"]>>[0]>[0],
+  ) {
+    if (this.gitlabInstallationHandler === undefined) throw new Error("handler unavailable");
+    return this.gitlabInstallationHandler(input);
   }
 
   prepare(
@@ -936,7 +999,9 @@ function candidateConfigurationId(configuration: ProviderApplicationConfiguratio
   if (configuration.provider === "github" || configuration.provider === "slack") {
     return configuration.appId;
   }
-  if (configuration.provider === "linear") return configuration.clientId;
+  if (configuration.provider === "linear" || configuration.provider === "gitlab") {
+    return configuration.clientId;
+  }
   return configuration.applicationId;
 }
 
@@ -951,6 +1016,22 @@ function slackBinding() {
     botUserId: "UBOT",
     botAccessToken: "token",
     scopes: ["chat:write"],
+  };
+}
+
+function gitlabBinding() {
+  return {
+    providerApplicationId: "gitlab-client",
+    stateVerifier: "state",
+    phase: "gitlab_namespace_selection" as const,
+    access: { sessionId: "session", userId: "operator" },
+    namespace: { id: 42, kind: "group" as const, fullPath: "acme", name: "Acme" },
+    user: { id: 7, username: "acme-bot", name: "Acme Bot" },
+    accessToken: "gitlab-token",
+    refreshToken: "gitlab-refresh-token",
+    accessTokenExpiresAt: null,
+    scopes: ["api"],
+    projects: [],
   };
 }
 

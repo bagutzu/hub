@@ -1,5 +1,9 @@
 import type { AccountAccessValue } from "../auth/organization-access.js";
-import type { BindLinearConnectionInput, BindSlackConnectionInput } from "../db/types.js";
+import type {
+  BindGitlabConnectionInput,
+  BindLinearConnectionInput,
+  BindSlackConnectionInput,
+} from "../db/types.js";
 import type { LinearInstallation } from "../providers/linear/client.js";
 import type { SlackSocketInstallationVerifier } from "../providers/slack/installation.js";
 import type { SlackDeliveryStatus } from "../triggers/slack/source/index.js";
@@ -7,7 +11,7 @@ import { TRUSTED_REQUEST_ORIGIN_HEADER } from "../http/request-origin.js";
 import { parseProviderApplicationConfiguration } from "./internal/store.js";
 import { reportFailure } from "../failures/index.js";
 
-export const PROVIDERS = ["github", "slack", "discord", "linear"] as const;
+export const PROVIDERS = ["github", "slack", "discord", "linear", "gitlab"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export interface GitHubProviderApplicationConfiguration {
@@ -56,17 +60,28 @@ export interface LinearProviderApplicationConfiguration {
   expectedVersion?: number;
 }
 
+export interface GitlabProviderApplicationConfiguration {
+  provider: "gitlab";
+  /** The instance origin, `https://gitlab.com` or a self-managed address. */
+  url: string;
+  clientId: string;
+  clientSecret: string;
+  expectedVersion?: number;
+}
+
 export type ProviderApplicationConfiguration =
   | GitHubProviderApplicationConfiguration
   | SlackProviderApplicationConfiguration
   | DiscordProviderApplicationConfiguration
-  | LinearProviderApplicationConfiguration;
+  | LinearProviderApplicationConfiguration
+  | GitlabProviderApplicationConfiguration;
 
 export type ProviderApplicationIdentity =
   | { provider: "github"; id: string; name: string; ownerLogin: string }
   | { provider: "slack"; id: string; name: string }
   | { provider: "discord"; id: string; name: string }
-  | { provider: "linear"; id: string; name: string };
+  | { provider: "linear"; id: string; name: string }
+  | { provider: "gitlab"; id: string; name: string };
 
 export interface StoredProviderApplication {
   provider: Provider;
@@ -116,6 +131,13 @@ export interface ProviderApplicationStore {
     installation: LinearInstallation;
     binding: BindLinearConnectionInput;
   }): Promise<void>;
+  completeGitlabInstallation(input: {
+    configuration: GitlabProviderApplicationConfiguration;
+    identity: Extract<ProviderApplicationIdentity, { provider: "gitlab" }>;
+    expectedVersion: number | undefined;
+    updatedByUserId: string;
+    binding: BindGitlabConnectionInput;
+  }): Promise<void>;
 }
 
 export interface ProviderRuntimeCandidate {
@@ -157,6 +179,15 @@ export interface ProviderRuntimeOwner {
       userId: string;
       installation: LinearInstallation;
       binding: BindLinearConnectionInput;
+    }) => Promise<void>,
+  ): void;
+  onGitlabInstallation?(
+    handler: (input: {
+      configuration: unknown;
+      expectedConfigurationVersion: number | undefined;
+      callbackOrigin: string;
+      userId: string;
+      binding: BindGitlabConnectionInput;
     }) => Promise<void>,
   ): void;
 }
@@ -229,7 +260,7 @@ export interface ProviderApplicationResult {
 
 export interface ProviderApplicationContinuation {
   status: "continuing";
-  provider: "slack" | "linear";
+  provider: "slack" | "linear" | "gitlab";
   url: string;
 }
 
@@ -377,6 +408,9 @@ export function createProviderApplications(
   options.runtime.onLinearInstallation?.((input) =>
     serialize(queues, "linear", () => completeLinearInstallation(options, input)),
   );
+  options.runtime.onGitlabInstallation?.((input) =>
+    serialize(queues, "gitlab", () => completeGitlabInstallation(options, input)),
+  );
 
   return {
     async overview(request) {
@@ -417,16 +451,17 @@ export function createProviderApplications(
           return [provider, view] as const;
         }),
       );
-      const [github, slack, discord, linear] = entries.map(([, view]) => view);
+      const [github, slack, discord, linear, gitlab] = entries.map(([, view]) => view);
       if (
         github === undefined ||
         slack === undefined ||
         discord === undefined ||
-        linear === undefined
+        linear === undefined ||
+        gitlab === undefined
       ) {
         throw new Error("provider overview is incomplete");
       }
-      return { callbackOrigin, providers: { github, slack, discord, linear } };
+      return { callbackOrigin, providers: { github, slack, discord, linear, gitlab } };
     },
 
     async verifyAndSave(request, provider, input, surface) {
@@ -440,24 +475,28 @@ export function createProviderApplications(
       return serialize<ProviderApplicationSaveResult>(queues, provider, () => {
         const returnRoute = providerApplicationReturnRoute(surface);
         if (provider === "slack" && input.provider === "slack") {
-          return beginSlackConfiguration(
-            options,
-            request,
-            account,
-            callbackOrigin,
+          return beginContinuingConfiguration(options, request, account, callbackOrigin, {
             input,
+            identity: { provider: "slack", id: input.appId, name: input.appId },
+            requiresHttps: true,
             returnRoute,
-          );
+          });
         }
         if (provider === "linear" && input.provider === "linear") {
-          return beginLinearConfiguration(
-            options,
-            request,
-            account,
-            callbackOrigin,
+          return beginContinuingConfiguration(options, request, account, callbackOrigin, {
             input,
+            identity: { provider: "linear", id: input.clientId, name: "Linear app" },
+            requiresHttps: true,
             returnRoute,
-          );
+          });
+        }
+        if (provider === "gitlab" && input.provider === "gitlab") {
+          return beginContinuingConfiguration(options, request, account, callbackOrigin, {
+            input,
+            identity: { provider: "gitlab", id: input.clientId, name: "GitLab app" },
+            requiresHttps: false,
+            returnRoute,
+          });
         }
         return verifyAndActivateProvider(options, account, provider, input, callbackOrigin);
       });
@@ -654,7 +693,7 @@ function providerStatus(
 /**
  * GitHub admits a delivery only when it can check the signature, so an App saved without a
  * webhook secret has repository access and no event triggers. Slack and Linear signing secrets
- * are part of their credentials, and Discord never delivers anything here.
+ * are part of their credentials, and Discord and GitLab never deliver anything here.
  */
 function acceptsEvents(configuration: ProviderApplicationConfiguration | undefined): boolean {
   if (configuration === undefined) return false;
@@ -684,6 +723,8 @@ function publicIdentifiers(
       return { applicationId: configuration.applicationId };
     case "linear":
       return { clientId: configuration.clientId };
+    case "gitlab":
+      return { url: configuration.url, clientId: configuration.clientId };
   }
   throw new Error("unknown provider configuration");
 }
@@ -842,6 +883,9 @@ async function startupIdentity(
   if (provider === "linear" && environmentConfiguration.provider === "linear") {
     return { provider: "linear", id: environmentConfiguration.clientId, name: "Linear app" };
   }
+  if (provider === "gitlab" && environmentConfiguration.provider === "gitlab") {
+    return { provider: "gitlab", id: environmentConfiguration.clientId, name: "GitLab app" };
+  }
   return verifier.verify(provider, environmentConfiguration);
 }
 
@@ -858,72 +902,27 @@ function requireHttpsOrigin(callbackOrigin: string): void {
   }
 }
 
-async function beginSlackConfiguration(
-  options: ProviderApplicationsOptions,
-  request: Request,
-  account: AccountAccessValue,
-  callbackOrigin: string,
-  input: SlackProviderApplicationConfiguration,
-  returnRoute: string,
-): Promise<ProviderApplicationContinuation> {
-  requireHttpsOrigin(callbackOrigin);
-  const previous = await options.store.read("slack");
-  if (previous?.version !== input.expectedVersion) {
-    throw new ProviderApplicationError("configurationConflict");
-  }
-  const organizationId = account.session.activeOrganizationId;
-  if (organizationId === null || options.beginCandidateConnection === undefined) {
-    throw new ProviderApplicationError("invalidInput");
-  }
-  const candidate = await options.runtime.prepare(
-    "slack",
-    withoutExpectedVersion(input),
-    callbackOrigin,
-    { provider: "slack", id: input.appId, name: input.appId },
-    (input.expectedVersion ?? 0) + 1,
-    {
-      expectedConfigurationVersion: input.expectedVersion,
-      activateConfiguration: true,
-    },
-  );
-  if (candidate.beginConnection === undefined) {
-    await closeCandidate(candidate, "slack", "begin_configuration");
-    throw new ProviderApplicationError("internal");
-  }
-  try {
-    const { url } = await options.beginCandidateConnection(
-      request,
-      organizationId,
-      returnRoute,
-      (candidateRequest) => {
-        const result = candidate.beginConnection?.(candidateRequest);
-        return result ?? Promise.reject(new Error("provider unavailable"));
-      },
-    );
-    await candidate.close();
-    return { status: "continuing", provider: "slack", url };
-  } catch (error) {
-    await closeCandidate(candidate, "slack", "begin_configuration");
-    if (error instanceof ProviderApplicationError) throw error;
-    throw new ProviderApplicationError("internal", undefined, { cause: error });
-  }
-}
-
 /**
- * Linear cannot verify an OAuth client's secret without an authorization grant. Treat saving
- * credentials as a candidate connection: the callback verifies the grant, persists the app and
- * workspace binding atomically, then publishes the prepared runtime.
+ * Slack, Linear and GitLab cannot verify a client secret without an authorization grant. Treat
+ * saving credentials as a candidate connection: the callback verifies the grant, persists the app
+ * and its first connection atomically, then publishes the prepared runtime.
  */
-async function beginLinearConfiguration(
+async function beginContinuingConfiguration(
   options: ProviderApplicationsOptions,
   request: Request,
   account: AccountAccessValue,
   callbackOrigin: string,
-  input: LinearProviderApplicationConfiguration,
-  returnRoute: string,
+  continuation: {
+    input: Extract<ProviderApplicationConfiguration, { provider: "slack" | "linear" | "gitlab" }>;
+    identity: ProviderApplicationIdentity;
+    requiresHttps: boolean;
+    returnRoute: string;
+  },
 ): Promise<ProviderApplicationContinuation> {
-  requireHttpsOrigin(callbackOrigin);
-  const previous = await options.store.read("linear");
+  const { input, identity, returnRoute } = continuation;
+  const provider = input.provider;
+  if (continuation.requiresHttps) requireHttpsOrigin(callbackOrigin);
+  const previous = await options.store.read(provider);
   if (previous?.version !== input.expectedVersion) {
     throw new ProviderApplicationError("configurationConflict");
   }
@@ -932,10 +931,10 @@ async function beginLinearConfiguration(
     throw new ProviderApplicationError("invalidInput");
   }
   const candidate = await options.runtime.prepare(
-    "linear",
+    provider,
     withoutExpectedVersion(input),
     callbackOrigin,
-    { provider: "linear", id: input.clientId, name: "Linear app" },
+    identity,
     (input.expectedVersion ?? 0) + 1,
     {
       expectedConfigurationVersion: input.expectedVersion,
@@ -943,7 +942,7 @@ async function beginLinearConfiguration(
     },
   );
   if (candidate.beginConnection === undefined) {
-    await closeCandidate(candidate, "linear", "begin_configuration");
+    await closeCandidate(candidate, provider, "begin_configuration");
     throw new ProviderApplicationError("internal");
   }
   try {
@@ -957,9 +956,9 @@ async function beginLinearConfiguration(
       },
     );
     await candidate.close();
-    return { status: "continuing", provider: "linear", url };
+    return { status: "continuing", provider, url };
   } catch (error) {
-    await closeCandidate(candidate, "linear", "begin_configuration");
+    await closeCandidate(candidate, provider, "begin_configuration");
     if (error instanceof ProviderApplicationError) throw error;
     throw new ProviderApplicationError("internal", undefined, { cause: error });
   }
@@ -1150,6 +1149,58 @@ async function completeLinearInstallation(
     candidate = undefined;
   } catch (error) {
     await closeCandidate(candidate, "linear", "complete_installation");
+    throw error;
+  }
+}
+
+async function completeGitlabInstallation(
+  options: ProviderApplicationsOptions,
+  input: {
+    configuration: unknown;
+    expectedConfigurationVersion: number | undefined;
+    callbackOrigin: string;
+    userId: string;
+    binding: BindGitlabConnectionInput;
+  },
+): Promise<void> {
+  const configuration = parseProviderApplicationConfiguration(input.configuration);
+  if (
+    configuration.provider !== "gitlab" ||
+    configuration.clientId !== input.binding.providerApplicationId
+  ) {
+    throw new ProviderApplicationError("credentialsRejected");
+  }
+  const previous = await options.store.read("gitlab");
+  const connections = await options.inventory.connectedIdentities("gitlab");
+  const identity: ProviderApplicationIdentity = {
+    provider: "gitlab",
+    id: configuration.clientId,
+    name: "GitLab app",
+  };
+  if (identityConflictsWithConnections(identity, previous, connections)) {
+    throw new ProviderApplicationError("identityConflict", previous?.identity.name);
+  }
+  let candidate: ProviderRuntimeCandidate | undefined;
+  try {
+    candidate = await options.runtime.prepare(
+      "gitlab",
+      configuration,
+      input.callbackOrigin,
+      identity,
+      (input.expectedConfigurationVersion ?? 0) + 1,
+    );
+    await candidate.start();
+    await options.store.completeGitlabInstallation({
+      configuration,
+      identity,
+      expectedVersion: input.expectedConfigurationVersion,
+      updatedByUserId: input.userId,
+      binding: input.binding,
+    });
+    candidate.publish();
+    candidate = undefined;
+  } catch (error) {
+    await closeCandidate(candidate, "gitlab", "complete_installation");
     throw error;
   }
 }

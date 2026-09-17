@@ -92,6 +92,7 @@ test("only Discord has no inbound events to wait for", () => {
       ["slack", true],
       ["discord", false],
       ["linear", true],
+      ["gitlab", false],
     ],
   );
 });
@@ -285,12 +286,26 @@ test("every field the boundary needs is asked for, in the portal's own words", (
     guideFields(guideFor("linear"), ORIGIN).map((field) => field.label),
     ["Client ID", "Client Secret", "Webhook signing secret"],
   );
+  assert.deepEqual(
+    guideFields(guideFor("gitlab"), ORIGIN).map((field) => [field.label, field.defaultValue]),
+    [
+      ["GitLab URL", "https://gitlab.com"],
+      ["Application ID", undefined],
+      ["Secret", undefined],
+    ],
+  );
 });
 
 test("each provider names the panel the operator pastes into after that provider", () => {
   assert.deepEqual(
     PROVIDER_GUIDES.map((guide) => guide.formTitle),
-    ["Paste from GitHub", "Connect Slack", "Paste from Discord", "Paste from Linear"],
+    [
+      "Paste from GitHub",
+      "Connect Slack",
+      "Paste from Discord",
+      "Paste from Linear",
+      "Paste from GitLab",
+    ],
   );
 });
 
@@ -311,6 +326,10 @@ test("a connected app is summarised with labelled rows rather than loose sentenc
   assert.deepEqual(guideFor("linear").summaryLabels, {
     identity: "Application",
     connections: "Workspaces",
+  });
+  assert.deepEqual(guideFor("gitlab").summaryLabels, {
+    identity: "Application",
+    connections: "Groups",
   });
 });
 
@@ -337,6 +356,11 @@ test("environment-managed copy can name the exact variables the operator has to 
     "LINEAR_CLIENT_ID",
     "LINEAR_CLIENT_SECRET",
     "LINEAR_WEBHOOK_SECRET",
+  ]);
+  assert.deepEqual(guideFor("gitlab").environmentVariables, [
+    "GITLAB_URL",
+    "GITLAB_CLIENT_ID",
+    "GITLAB_CLIENT_SECRET",
   ]);
 });
 
