@@ -61,6 +61,7 @@ export const FIXTURE_APP_CREDENTIALS = {
     url: "https://gitlab.com",
     clientId: "browser-gitlab-client",
     clientSecret: "browser-gitlab-client-secret",
+    webhookSecret: "browser-gitlab-webhook-secret",
   },
 } as const;
 

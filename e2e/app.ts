@@ -365,6 +365,7 @@ function environmentAppVariables(
   if (providers.includes("gitlab")) {
     variables["GITLAB_CLIENT_ID"] = "browser-gitlab-client";
     variables["GITLAB_CLIENT_SECRET"] = "browser-gitlab-client-secret";
+    variables["GITLAB_WEBHOOK_SECRET"] = "browser-gitlab-webhook-secret";
   }
   return variables;
 }
