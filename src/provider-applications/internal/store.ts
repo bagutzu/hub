@@ -53,6 +53,7 @@ const gitlabConfigurationSchema = z.object({
   url: z.string().min(1),
   clientId: z.string().min(1),
   clientSecret: z.string().min(1),
+  webhookSecret: z.string().min(1).optional(),
 });
 const configurationSchema = z.discriminatedUnion("provider", [
   githubConfigurationSchema,
@@ -69,7 +70,7 @@ export function parseProviderApplicationConfiguration(
   const parsed = configurationSchema.parse(value);
   // An absent optional value stays absent rather than becoming present-and-undefined, which is
   // what the rest of the codebase means by optional.
-  if (parsed.provider !== "github") return parsed;
+  if (parsed.provider !== "github" && parsed.provider !== "gitlab") return parsed;
   const { webhookSecret, ...rest } = parsed;
   return webhookSecret === undefined ? rest : { ...rest, webhookSecret };
 }

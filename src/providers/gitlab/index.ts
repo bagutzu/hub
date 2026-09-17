@@ -14,14 +14,18 @@ import {
   stateHash,
 } from "../../connections/shared.js";
 import { connectionReturnUrl } from "../../connections/result-contract.js";
-import { ConnectionAccessDeniedError } from "../../db/errors.js";
+import { ConnectionAccessDeniedError, DatabaseUnavailableError } from "../../db/errors.js";
 import type {
   BindGitlabConnectionInput,
   ConnectionAttemptRecord,
   Database,
   GitlabConnectionRecord,
 } from "../../db/types.js";
+import { replyOutputTool } from "../../execution-capabilities/outputs.js";
 import { logger } from "../../logger.js";
+import { createGitlabTriggerProvider } from "../../triggers/gitlab/provider.js";
+import { createGitlabReplyExecutor, gitlabReplyAvailable } from "../../triggers/gitlab/reply.js";
+import { createGitlabWebhookSource } from "../../triggers/gitlab/webhook.js";
 import type { ProviderConnectionRegistration, ProviderRegistration } from "../registration.js";
 import {
   GitlabGrantSchema,
@@ -37,6 +41,8 @@ export interface GitlabRegistrationConfiguration {
   url: string;
   clientId: string;
   clientSecret: string;
+  /** Absent when event triggers are not set up. Deliveries are then refused, not accepted blind. */
+  webhookSecret?: string;
 }
 
 export type GitlabInstallationHandler = (input: {
@@ -91,13 +97,31 @@ export function createGitlabRegistration(
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
   const database = options.database;
+  const webhook = createGitlabWebhookSource(configuration.webhookSecret, {
+    recordProject: async (project) => {
+      if (database === null) throw new DatabaseUnavailableError();
+      const connection = await database.recordGitlabProject(project);
+      return connection === undefined ? undefined : { namespaceId: connection.namespace.id };
+    },
+    accept: (input) =>
+      database === null
+        ? Promise.reject(new DatabaseUnavailableError())
+        : database.acceptGitlabEvent({
+            ...input,
+            providerApplicationId: configuration.clientId,
+            providerConfigurationVersion: options.configurationVersion ?? 0,
+          }),
+  });
+  const requests = [
+    { name: "gitlab.events", handle: (request: Request) => webhook.handle(request) },
+  ];
   if (database === null) {
     return {
       connection: gitlabConnectionStatus(true),
       triggerProviders: [],
-      sources: [],
+      sources: [webhook],
       outputs: [],
-      requests: [],
+      requests,
     };
   }
   const api =
@@ -133,10 +157,20 @@ export function createGitlabRegistration(
       callbackOrigin: options.publicBaseUrl,
     },
     connection,
-    triggerProviders: [],
-    sources: [],
-    outputs: [],
-    requests: [],
+    triggerProviders: [
+      ({ configurationStoreForProject }) =>
+        createGitlabTriggerProvider({ configurationStoreForProject, reactions: api }),
+    ],
+    sources: [webhook],
+    outputs: [
+      {
+        type: "gitlab.reply",
+        tool: replyOutputTool,
+        available: gitlabReplyAvailable,
+        execute: createGitlabReplyExecutor({ client: api }),
+      },
+    ],
+    requests,
   };
 }
 

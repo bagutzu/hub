@@ -9,9 +9,10 @@ import type {
   BindGitlabConnectionInput,
   ConnectionAttemptRecord,
   GitlabConnectionRecord,
+  GitlabProjectInput,
   StartConnectionAttemptInput,
 } from "../../db/types.js";
-import type { GitlabConnectionClient, GitlabGrant } from "./client.js";
+import type { GitlabApiClient, GitlabConnectionClient, GitlabGrant } from "./client.js";
 import { createGitlabRegistration } from "./index.js";
 
 const GRANT: GitlabGrant = {
@@ -36,7 +37,51 @@ const PROJECTS = [
 const EMPTY_USAGE = { github: [], discord: [], slack: [], linear: [], gitlab: [] };
 
 describe("GitLab registration", () => {
-  it("is a connection-only slice that starts OAuth with PKCE over any origin", async () => {
+  it("registers the events request, sources, trigger provider and reply beside the connection", () => {
+    const registration = createGitlabRegistration({
+      database: memberDatabase(),
+      auth: new RegistrationAuth(),
+      applicationBaseUrl: "https://hub.test",
+      publicBaseUrl: "https://hub.test",
+      configuration: { ...gitlabConfiguration(), webhookSecret: "webhook-secret" },
+      connectionClient: new GitlabConnectionFake(),
+      apiClient: new GitlabApiFake(),
+    });
+
+    assert.equal(registration.connection.name, "gitlab");
+    assert.deepEqual(
+      registration.requests.map(({ name }) => name),
+      ["gitlab.events"],
+    );
+    assert.equal(registration.sources.length, 1);
+    assert.equal(registration.triggerProviders.length, 1);
+    assert.deepEqual(
+      registration.outputs.map(({ type }) => type),
+      ["gitlab.reply"],
+    );
+  });
+
+  it("refuses deliveries until a signing token is set, instead of accepting them blind", async () => {
+    const registration = createGitlabRegistration({
+      database: memberDatabase(),
+      auth: new RegistrationAuth(),
+      applicationBaseUrl: "https://hub.test",
+      publicBaseUrl: "https://hub.test",
+      configuration: gitlabConfiguration(),
+      connectionClient: new GitlabConnectionFake(),
+      apiClient: new GitlabApiFake(),
+    });
+
+    const response = await registration.requests[0]!.handle(
+      new Request("https://hub.test/api/integrations/gitlab/events", {
+        method: "POST",
+        body: "{}",
+      }),
+    );
+    assert.equal(response.status, 503);
+  });
+
+  it("starts OAuth with PKCE over any origin", async () => {
     const database = memberDatabase();
     let attempt: StartConnectionAttemptInput | undefined;
     database.startConnectionAttempt = (input) => {
@@ -54,10 +99,6 @@ describe("GitLab registration", () => {
     });
 
     assert.equal(registration.connection.name, "gitlab");
-    assert.deepEqual(registration.sources, []);
-    assert.deepEqual(registration.triggerProviders, []);
-    assert.deepEqual(registration.outputs, []);
-    assert.deepEqual(registration.requests, []);
 
     const response = await registration.connection.actions["start"]!(
       new Request("http://hub.test/start?organizationSlug=org", { method: "POST" }),
@@ -313,7 +354,7 @@ describe("GitLab registration", () => {
       publicBaseUrl: "https://hub.test",
       configuration: gitlabConfiguration(),
       connectionClient: new GitlabConnectionFake(),
-      apiClient: { listProjects: async () => PROJECTS },
+      apiClient: new GitlabApiFake(),
     });
 
     const response = await registration.connection.actions["refresh"]!(
@@ -426,6 +467,24 @@ class GitlabConnectionFake implements GitlabConnectionClient {
 
   listProjects(_token: string, namespace: { id: number }) {
     return Promise.resolve(namespace.id === 42 ? [...PROJECTS] : []);
+  }
+}
+
+class GitlabApiFake implements GitlabApiClient {
+  listProjects(): Promise<GitlabProjectInput[]> {
+    return Promise.resolve([...PROJECTS]);
+  }
+
+  createNote(): Promise<never> {
+    return Promise.reject(new Error("unused"));
+  }
+
+  createAward(): Promise<never> {
+    return Promise.reject(new Error("unused"));
+  }
+
+  deleteAward(): Promise<never> {
+    return Promise.reject(new Error("unused"));
   }
 }
 

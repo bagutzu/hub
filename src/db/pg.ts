@@ -76,6 +76,7 @@ import type {
   StartConnectionAttemptInput,
   AcceptDiscordEventInput,
   AcceptGitHubEventInput,
+  AcceptGitlabEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
   UpdateLinearConnectionTokensInput,
@@ -172,6 +173,10 @@ class PgDatabase implements Database {
 
   acceptLinearEvent(input: AcceptLinearEventInput) {
     return this.triggerAcceptance.acceptLinear(input);
+  }
+
+  acceptGitlabEvent(input: AcceptGitlabEventInput) {
+    return this.triggerAcceptance.acceptGitlab(input);
   }
 
   persistManualEvent(input: PersistManualEventInput) {
@@ -4346,6 +4351,10 @@ class PgDatabase implements Database {
 
   listGitlabProjects(organizationId: string, connectionId: string) {
     return this.connections.listGitlabProjects(organizationId, connectionId);
+  }
+
+  recordGitlabProject(project: GitlabProjectInput) {
+    return this.connections.recordGitlabProject(project);
   }
 
   replaceGitlabProjects(

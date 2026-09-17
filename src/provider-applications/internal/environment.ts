@@ -142,7 +142,15 @@ function gitlabEnvironment(
   const url = nonEmpty(environment["GITLAB_URL"]);
   const clientId = nonEmpty(environment["GITLAB_CLIENT_ID"]);
   const clientSecret = nonEmpty(environment["GITLAB_CLIENT_SECRET"]);
-  if (url === undefined && clientId === undefined && clientSecret === undefined) return undefined;
+  const webhookSecret = nonEmpty(environment["GITLAB_WEBHOOK_SECRET"]);
+  if (
+    url === undefined &&
+    clientId === undefined &&
+    clientSecret === undefined &&
+    webhookSecret === undefined
+  ) {
+    return undefined;
+  }
   if (clientId === undefined || clientSecret === undefined) {
     throw new Error(
       "GitLab environment configuration requires GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET.",
@@ -153,6 +161,7 @@ function gitlabEnvironment(
     url: normalizeGitlabUrl(url ?? DEFAULT_GITLAB_URL),
     clientId,
     clientSecret,
+    ...(webhookSecret === undefined ? {} : { webhookSecret }),
   };
 }
 
