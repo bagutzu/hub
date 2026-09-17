@@ -74,6 +74,11 @@ export const SLACK_WEBHOOK_CREDENTIALS = {
 /** The one GitHub value that only exists once the origin can receive deliveries. */
 export const GITHUB_EVENT_CREDENTIALS = { "Webhook secret": "phase-zero-webhook-secret" } as const;
 
+/** GitLab's counterpart: the signing token every project hook is registered with. */
+export const GITLAB_EVENT_CREDENTIALS = {
+  "Webhook signing token": "browser-gitlab-webhook-secret",
+} as const;
+
 /**
  * One provider's collapsible section. Everything is addressed by role and accessible name, so a
  * passing journey is also evidence that the section is reachable without sight or a pointer.
@@ -344,9 +349,9 @@ export class AppSection {
   }
 
   /** The named checkboxes a step renders as items rather than as a comma run-on. */
-  async subscribedEvents(): Promise<readonly string[]> {
-    return (await this.body().locator("ol ul").first().locator("li").allInnerTexts()).map((text) =>
-      text.trim(),
+  async subscribedEvents(list = 0): Promise<readonly string[]> {
+    return (await this.body().locator("ol ul").nth(list).locator("li").allInnerTexts()).map(
+      (text) => text.trim(),
     );
   }
 
