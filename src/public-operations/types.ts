@@ -45,6 +45,7 @@ export interface ConfigurationResources {
   discord: readonly { slug: string; guildName: string }[];
   slack: readonly { slug: string; teamName: string }[];
   linear: readonly { slug: string; organizationName: string }[];
+  gitlab: readonly { slug: string; namespacePath: string }[];
 }
 
 export type ListConfigurationResourcesResult =

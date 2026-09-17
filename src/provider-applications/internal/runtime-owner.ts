@@ -28,6 +28,7 @@ import type {
 import { parseProviderApplicationConfiguration } from "./store.js";
 import type { SlackDeliveryStatus } from "../../triggers/slack/source/index.js";
 import { GITHUB_TRIGGER_SOURCE_NAMES } from "../../triggers/github/classification.js";
+import { GITLAB_TRIGGER_SOURCE_NAMES } from "../../triggers/gitlab/events.js";
 
 interface Slot {
   active: ActiveRegistration | undefined;
@@ -690,7 +691,7 @@ function eventNames(provider: Provider): TriggerProvider["eventNames"] {
   if (provider === "slack") return ["slack.mention"];
   if (provider === "discord") return ["discord.mention"];
   if (provider === "linear") return ["linear.issue", "linear.comment"];
-  if (provider === "gitlab") return [];
+  if (provider === "gitlab") return GITLAB_TRIGGER_SOURCE_NAMES;
   return GITHUB_TRIGGER_SOURCE_NAMES;
 }
 

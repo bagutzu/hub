@@ -42,6 +42,7 @@ const gitlabConfiguration: ProviderApplicationConfiguration = {
   url: "https://gitlab.com",
   clientId: "gitlab-client",
   clientSecret: "gitlab-client-secret",
+  webhookSecret: "gitlab-webhook-secret",
 };
 
 describe("provider applications", () => {
@@ -416,6 +417,7 @@ describe("provider applications", () => {
     });
 
     assert.equal(fixture.store.values.get("gitlab")?.version, 1);
+    assert.deepEqual(fixture.store.values.get("gitlab")?.configuration, gitlabConfiguration);
     assert.notEqual(fixture.runtime.active("gitlab"), undefined);
   });
 

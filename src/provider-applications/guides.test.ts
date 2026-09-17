@@ -92,7 +92,7 @@ test("only Discord has no inbound events to wait for", () => {
       ["slack", true],
       ["discord", false],
       ["linear", true],
-      ["gitlab", false],
+      ["gitlab", true],
     ],
   );
 });
@@ -292,6 +292,7 @@ test("every field the boundary needs is asked for, in the portal's own words", (
       ["GitLab URL", "https://gitlab.com"],
       ["Application ID", undefined],
       ["Secret", undefined],
+      ["Webhook signing token", undefined],
     ],
   );
 });
@@ -361,6 +362,7 @@ test("environment-managed copy can name the exact variables the operator has to 
     "GITLAB_URL",
     "GITLAB_CLIENT_ID",
     "GITLAB_CLIENT_SECRET",
+    "GITLAB_WEBHOOK_SECRET",
   ]);
 });
 

@@ -49,6 +49,8 @@ const ProjectSchema = z.object({
   namespace: z.object({ id: z.number().int().positive() }).optional(),
 });
 
+const AwardSchema = z.object({ id: z.number().int().positive() });
+
 export const GitlabGrantSchema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).nullable(),
@@ -86,8 +88,31 @@ export interface GitlabConnectionClient {
   ): Promise<GitlabProjectInput[]>;
 }
 
+export interface GitlabItemRef {
+  type: "issue" | "merge_request";
+  iid: number;
+}
+
+export type GitlabAwardName = "eyes" | "thumbsup" | "thumbsdown";
+
+interface GitlabAwardTarget {
+  namespaceId: number;
+  projectId: number;
+  item: GitlabItemRef;
+  /** An award on one of the item's notes rather than on the item itself. */
+  noteId: number | null;
+}
+
 export interface GitlabApiClient {
   listProjects(namespaceId: number): Promise<GitlabProjectInput[]>;
+  createNote(input: {
+    namespaceId: number;
+    projectId: number;
+    item: GitlabItemRef;
+    body: string;
+  }): Promise<void>;
+  createAward(input: GitlabAwardTarget & { name: GitlabAwardName }): Promise<{ id: number }>;
+  deleteAward(input: GitlabAwardTarget & { awardId: number }): Promise<void>;
 }
 
 export function normalizeGitlabUrl(value: string): string {
@@ -269,6 +294,27 @@ export function createGitlabApiClient(options: {
     }
   };
 
+  const base = normalizeGitlabUrl(options.url);
+  const request = options.fetch ?? fetch;
+  const send = async (
+    namespaceId: number,
+    method: "POST" | "DELETE",
+    path: string,
+    body?: Record<string, string>,
+  ): Promise<Response> => {
+    const response = await request(`${base}/api/v4${path}`, {
+      method,
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${await accessTokenFor(namespaceId)}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (!response.ok) throw new Error(`GitLab API HTTP ${response.status}`);
+    return response;
+  };
+
   return {
     async listProjects(namespaceId) {
       const connection = await options.connectionForNamespace(namespaceId);
@@ -278,6 +324,18 @@ export function createGitlabApiClient(options: {
         connection.namespace,
         connection.user.id,
       );
+    },
+    async createNote({ namespaceId, projectId, item, body }) {
+      await send(namespaceId, "POST", `${itemPath(projectId, item)}/notes`, { body });
+    },
+    async createAward({ namespaceId, projectId, item, noteId, name }) {
+      const response = await send(namespaceId, "POST", awardPath(projectId, item, noteId), {
+        name,
+      });
+      return { id: AwardSchema.parse(await response.json()).id };
+    },
+    async deleteAward({ namespaceId, projectId, item, noteId, awardId }) {
+      await send(namespaceId, "DELETE", `${awardPath(projectId, item, noteId)}/${String(awardId)}`);
     },
   };
 }
@@ -293,6 +351,19 @@ async function personalNamespaceId(
     await api(request, base, accessToken, `/namespaces/${encodeURIComponent(username)}`),
   );
   return namespace.kind === "user" ? namespace.id : null;
+}
+
+function itemPath(projectId: number, item: GitlabItemRef): string {
+  const collection = item.type === "issue" ? "issues" : "merge_requests";
+  return `/projects/${String(projectId)}/${collection}/${String(item.iid)}`;
+}
+
+function awardPath(projectId: number, item: GitlabItemRef, noteId: number | null): string {
+  const subject =
+    noteId === null
+      ? itemPath(projectId, item)
+      : `${itemPath(projectId, item)}/notes/${String(noteId)}`;
+  return `${subject}/award_emoji`;
 }
 
 async function listNamespaces(

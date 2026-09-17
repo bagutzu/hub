@@ -191,14 +191,15 @@ function triggerEvent(yaml: string, fallback: string | undefined): string {
 function triggerProvider(
   event: string,
   fallback: string | undefined,
-): "github" | "discord" | "slack" | "linear" | "manual" | "schedule" {
+): "github" | "discord" | "slack" | "linear" | "gitlab" | "manual" | "schedule" {
   const provider = event.split(".")[0] ?? fallback;
   if (
     provider === "schedule" ||
     provider === "github" ||
     provider === "discord" ||
     provider === "slack" ||
-    provider === "linear"
+    provider === "linear" ||
+    provider === "gitlab"
   ) {
     return provider;
   }
