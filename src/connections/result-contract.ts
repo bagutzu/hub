@@ -10,7 +10,7 @@ import { withReference } from "../failures/reference.js";
  * nobody mapped cannot leak through as raw text.
  */
 
-export const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear"] as const;
+export const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear", "gitlab"] as const;
 export type ConnectionProvider = (typeof CONNECTION_PROVIDERS)[number];
 
 export const connectionResultSchema = z.enum([
@@ -18,14 +18,19 @@ export const connectionResultSchema = z.enum([
   "discord_connected",
   "slack_connected",
   "linear_connected",
+  "gitlab_connected",
   "github_disconnected",
   "discord_disconnected",
   "slack_disconnected",
   "linear_disconnected",
+  "gitlab_disconnected",
   "github_cancelled",
   "discord_cancelled",
   "slack_cancelled",
   "linear_cancelled",
+  "gitlab_cancelled",
+  /** GitLab authorized the grant; the browser now picks the namespace it covers. */
+  "gitlab_namespace_required",
   "github_approval_required",
   "slack_bot_failed",
   "provider_not_configured",
@@ -45,6 +50,8 @@ export interface ConnectionReturn {
   result: ConnectionResult;
   /** Failure report ID, present only when the result is Hub's own fault. */
   reference?: string;
+  /** The state of an attempt still waiting on the browser, for a provider with a second leg. */
+  attempt?: string;
 }
 
 export type ConnectionReturnCopy =
@@ -60,13 +67,19 @@ export type ConnectionReturnCopy =
  */
 export const CONNECTIONS_RETURN_ROUTE = "/connections";
 
-const RETURN_PARAMS = { provider: "app", result: "result", reference: "reference" } as const;
+const RETURN_PARAMS = {
+  provider: "app",
+  result: "result",
+  reference: "reference",
+  attempt: "attempt",
+} as const;
 
 /** The query the connections landing route accepts and forwards untouched. */
 export const connectionReturnSearchSchema = z.object({
   [RETURN_PARAMS.provider]: z.string().optional(),
   [RETURN_PARAMS.result]: z.string().optional(),
   [RETURN_PARAMS.reference]: z.string().optional(),
+  [RETURN_PARAMS.attempt]: z.string().optional(),
 });
 
 export function connectionReturnUrl(
@@ -78,6 +91,7 @@ export function connectionReturnUrl(
   url.searchParams.set(RETURN_PARAMS.provider, value.provider);
   url.searchParams.set(RETURN_PARAMS.result, value.result);
   if (value.reference !== undefined) url.searchParams.set(RETURN_PARAMS.reference, value.reference);
+  if (value.attempt !== undefined) url.searchParams.set(RETURN_PARAMS.attempt, value.attempt);
   return url;
 }
 
@@ -93,10 +107,12 @@ export function readConnectionReturn(url: URL): ConnectionReturn | undefined {
   const result = url.searchParams.get(RETURN_PARAMS.result);
   if (!provider.success || result === null) return undefined;
   const reference = url.searchParams.get(RETURN_PARAMS.reference);
+  const attempt = url.searchParams.get(RETURN_PARAMS.attempt);
   return {
     provider: provider.data,
     result: connectionResultSchema.catch("connection_unavailable").parse(result),
     ...(reference === null ? {} : { reference }),
+    ...(attempt === null ? {} : { attempt }),
   };
 }
 
@@ -112,6 +128,7 @@ const PROVIDER_NAMES: Readonly<Record<ConnectionProvider, string>> = {
   discord: "Discord",
   slack: "Slack",
   linear: "Linear",
+  gitlab: "GitLab",
 };
 
 export function connectionProviderName(provider: ConnectionProvider): string {
@@ -141,14 +158,21 @@ const RETURN_COPY: Readonly<Record<ConnectionResult, (name: string) => Connectio
   discord_connected: connected,
   slack_connected: connected,
   linear_connected: connected,
+  gitlab_connected: connected,
   github_disconnected: disconnected,
   discord_disconnected: disconnected,
   slack_disconnected: disconnected,
   linear_disconnected: disconnected,
+  gitlab_disconnected: disconnected,
   github_cancelled: (name) => cancelled("Installation", name),
   slack_cancelled: (name) => cancelled("Installation", name),
   discord_cancelled: (name) => cancelled("Authorization", name),
   linear_cancelled: (name) => cancelled("Authorization", name),
+  gitlab_cancelled: (name) => cancelled("Authorization", name),
+  gitlab_namespace_required: () => ({
+    tone: "success",
+    message: "GitLab authorized Hub. Choose the group or namespace this connection covers.",
+  }),
   github_approval_required: (name) =>
     failed(
       name,

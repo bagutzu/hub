@@ -226,7 +226,14 @@ export async function handleConnections(
     | "slackCallback"
     | "linearStart"
     | "linearDisconnect"
-    | "linearCallback",
+    | "linearCallback"
+    | "gitlabStart"
+    | "gitlabDisconnect"
+    | "gitlabCallback"
+    | "gitlabNamespaces"
+    | "gitlabSelect"
+    | "gitlabCancel"
+    | "gitlabRefresh",
 ): Promise<Response> {
   const runtime = await getApplication();
   if (operation === "status") return runtime.connectionStatus(request);
@@ -248,6 +255,13 @@ const CONNECTION_ACTIONS = {
   linearStart: { provider: "linear", name: "start" },
   linearDisconnect: { provider: "linear", name: "disconnect" },
   linearCallback: { provider: "linear", name: "callback" },
+  gitlabStart: { provider: "gitlab", name: "start" },
+  gitlabDisconnect: { provider: "gitlab", name: "disconnect" },
+  gitlabCallback: { provider: "gitlab", name: "callback" },
+  gitlabNamespaces: { provider: "gitlab", name: "namespaces" },
+  gitlabSelect: { provider: "gitlab", name: "select" },
+  gitlabCancel: { provider: "gitlab", name: "cancel" },
+  gitlabRefresh: { provider: "gitlab", name: "refresh" },
 } as const;
 
 export async function resolveOrganizationResources(

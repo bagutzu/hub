@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { DaemonHandoffSurface } from "./daemon-handoff.js";
 
-export type AppProvider = "GitHub" | "Slack" | "Discord" | "Linear";
+export type AppProvider = "GitHub" | "Slack" | "Discord" | "Linear" | "GitLab";
 
 export type AppStatus =
   | "Not set up"
@@ -17,6 +17,7 @@ const PORTAL_LINKS: Readonly<Record<AppProvider, string>> = {
   Slack: "Create a Slack app",
   Discord: "Discord developer portal",
   Linear: "Open Linear API applications",
+  GitLab: "Open GitLab applications",
 };
 
 const APP_SUMMARIES: Readonly<Record<AppProvider, string>> = {
@@ -24,6 +25,7 @@ const APP_SUMMARIES: Readonly<Record<AppProvider, string>> = {
   Slack: "Reads mentions in your workspace and replies in the thread.",
   Discord: "Reads mentions in your server and replies in the thread.",
   Linear: "Starts project-scoped workflows from issues and posts outcomes back to Linear.",
+  GitLab: "Connects the groups where agents will read issues and merge requests.",
 };
 
 /**
@@ -54,6 +56,11 @@ export const WORKING_CREDENTIALS: Readonly<Record<AppProvider, Readonly<Record<s
       "Client ID": "browser-linear-client",
       "Client Secret": "browser-linear-client-secret",
       "Webhook signing secret": "browser-linear-webhook-secret",
+    },
+    GitLab: {
+      "GitLab URL": "https://gitlab.com",
+      "Application ID": "browser-gitlab-client",
+      Secret: "browser-gitlab-client-secret",
     },
   };
 
@@ -213,7 +220,9 @@ export class AppSection {
             ? /^(?:Connect Slack|Save and continue to Slack)$/u
             : this.provider === "Linear"
               ? "Save and continue to Linear"
-              : "Verify and save",
+              : this.provider === "GitLab"
+                ? "Save and continue to GitLab"
+                : "Verify and save",
       })
       .click();
   }
@@ -464,6 +473,7 @@ export class AppSetupSurface {
   readonly slack: AppSection;
   readonly discord: AppSection;
   readonly linear: AppSection;
+  readonly gitlab: AppSection;
   /** Where the way out leads on first run, before the dashboard. */
   readonly daemonHandoff: DaemonHandoffSurface;
 
@@ -472,25 +482,41 @@ export class AppSetupSurface {
     this.slack = new AppSection(page, "Slack");
     this.discord = new AppSection(page, "Discord");
     this.linear = new AppSection(page, "Linear");
+    this.gitlab = new AppSection(page, "GitLab");
     this.daemonHandoff = new DaemonHandoffSurface(page);
   }
 
   sections(): readonly AppSection[] {
-    return [this.github, this.slack, this.discord, this.linear];
+    return [this.github, this.slack, this.discord, this.linear, this.gitlab];
   }
 
   section(provider: AppProvider): AppSection {
     if (provider === "GitHub") return this.github;
     if (provider === "Slack") return this.slack;
     if (provider === "Discord") return this.discord;
+    if (provider === "GitLab") return this.gitlab;
     return this.linear;
+  }
+
+  /** The second leg of a GitLab connection: pick the group the grant covers, then connect. */
+  async chooseGitlabNamespace(fullPath: string): Promise<void> {
+    const body = this.gitlab.body();
+    await body.getByRole("combobox", { name: "Group or namespace" }).click();
+    // The option's accessible name is the path followed by the group's name, so anchor on the
+    // path and its trailing space: "acme" must not also match "acme-bot".
+    await this.page
+      .getByRole("option", {
+        name: new RegExp(`^${fullPath.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")} `, "u"),
+      })
+      .click();
+    await body.getByRole("button", { name: `Connect ${fullPath}`, exact: true }).click();
   }
 
   async expectOnboarding(): Promise<void> {
     await expect(this.page.getByRole("heading", { name: "Set up your apps" })).toBeVisible();
     await expect(
       this.page.getByText(
-        "Paseo Hub talks to GitHub, Slack, Discord, and Linear through apps you create and own.",
+        "Paseo Hub talks to GitHub, Slack, Discord, Linear, and GitLab through apps you create and own.",
         { exact: false },
       ),
     ).toBeVisible();
@@ -501,7 +527,7 @@ export class AppSetupSurface {
     await expect(this.page.getByRole("heading", { name: "Apps", exact: true })).toBeVisible();
     await expect(
       this.page.getByText(
-        "The GitHub, Slack, Discord, and Linear apps Hub uses to reach your workspaces.",
+        "The GitHub, Slack, Discord, Linear, and GitLab apps Hub uses to reach your workspaces.",
       ),
     ).toBeVisible();
   }
@@ -555,6 +581,7 @@ export class AppSetupSurface {
     await this.slack.expectExpanded();
     await this.discord.expectCollapsed();
     await this.linear.expectCollapsed();
+    await this.gitlab.expectCollapsed();
   }
 
   async collapseAll(): Promise<void> {

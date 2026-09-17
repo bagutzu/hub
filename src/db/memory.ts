@@ -26,7 +26,14 @@ import type {
   AdvanceGitHubConnectionAttemptInput,
   BindDiscordConnectionInput,
   BindGitHubConnectionInput,
+  AdvanceGitlabConnectionAttemptInput,
+  BindGitlabConnectionInput,
   BindLinearConnectionInput,
+  CompleteGitlabProviderApplicationInput,
+  GitlabConnectionRecord,
+  GitlabConnectionRefreshOperation,
+  GitlabProjectInput,
+  GitlabProjectRecord,
   BindSlackConnectionInput,
   CompleteLinearProviderApplicationInput,
   CompleteSlackProviderApplicationInput,
@@ -217,6 +224,8 @@ class MemoryDatabase implements Database {
   private readonly discordConnections = new Map<string, DiscordConnectionRecord>();
   private readonly slackConnections = new Map<string, SlackConnectionRecord>();
   private readonly linearConnections = new Map<string, LinearConnectionRecord>();
+  private readonly gitlabConnections = new Map<number, GitlabConnectionRecord>();
+  private readonly gitlabProjects = new Map<string, GitlabProjectRecord>();
   private readonly organizationIds: Set<string>;
 
   constructor(private readonly options: MemoryDatabaseOptions = {}) {
@@ -2948,6 +2957,9 @@ class MemoryDatabase implements Database {
       linear: Array.from(this.linearConnections.values()).filter(
         (connection) => connection.organizationId === organizationId,
       ),
+      gitlab: Array.from(this.gitlabConnections.values()).filter(
+        (connection) => connection.organizationId === organizationId,
+      ),
     };
   }
 
@@ -3138,6 +3150,77 @@ class MemoryDatabase implements Database {
         });
       },
     );
+  }
+
+  advanceGitlabConnectionAttempt(_input: AdvanceGitlabConnectionAttemptInput): Promise<void> {
+    return connectionPersistenceUnavailable();
+  }
+
+  bindGitlabConnection(_input: BindGitlabConnectionInput): Promise<void> {
+    return connectionPersistenceUnavailable();
+  }
+
+  completeGitlabProviderApplication(_input: CompleteGitlabProviderApplicationInput): Promise<void> {
+    return connectionPersistenceUnavailable();
+  }
+
+  withGitlabConnectionRefresh<T>(
+    namespaceId: number,
+    operation: GitlabConnectionRefreshOperation<T>,
+  ): Promise<T> {
+    return this.withAdvisoryLock(
+      JSON.stringify(["paseo-connection", "gitlab", "external", String(namespaceId)]),
+      async () => {
+        const connection = this.gitlabConnections.get(namespaceId);
+        return operation(connection, async (input) => {
+          const current = this.gitlabConnections.get(namespaceId);
+          if (current === undefined) throw new Error("GitLab connection unavailable");
+          this.gitlabConnections.set(namespaceId, { ...current, ...input });
+        });
+      },
+    );
+  }
+
+  findGitlabConnection(namespaceId: number): Promise<GitlabConnectionRecord | undefined> {
+    return Promise.resolve(this.gitlabConnections.get(namespaceId));
+  }
+
+  findGitlabConnectionForOrganization(
+    organizationId: string,
+    connectionId: string,
+  ): Promise<GitlabConnectionRecord | undefined> {
+    return Promise.resolve(
+      Array.from(this.gitlabConnections.values()).find(
+        (connection) =>
+          connection.id === connectionId && connection.organizationId === organizationId,
+      ),
+    );
+  }
+
+  listGitlabProjects(organizationId: string, connectionId: string): Promise<GitlabProjectRecord[]> {
+    return Promise.resolve(
+      Array.from(this.gitlabProjects.values())
+        .filter(
+          (project) =>
+            project.organizationId === organizationId && project.connectionId === connectionId,
+        )
+        .sort((left, right) => left.pathWithNamespace.localeCompare(right.pathWithNamespace)),
+    );
+  }
+
+  replaceGitlabProjects(
+    organizationId: string,
+    connectionId: string,
+    projects: readonly GitlabProjectInput[],
+  ): Promise<void> {
+    for (const [key, project] of this.gitlabProjects) {
+      if (project.connectionId === connectionId) this.gitlabProjects.delete(key);
+    }
+    for (const project of projects) {
+      const key = `${connectionId}:${project.projectId}`;
+      this.gitlabProjects.set(key, { id: key, organizationId, connectionId, ...project });
+    }
+    return Promise.resolve();
   }
 
   disconnectConnection(

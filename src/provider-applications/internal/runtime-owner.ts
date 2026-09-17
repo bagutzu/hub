@@ -7,6 +7,10 @@ import { logger } from "../../logger.js";
 import { reportFailure } from "../../failures/index.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
 import { createGitHubRegistration } from "../../providers/github/index.js";
+import {
+  createGitlabRegistration,
+  type GitlabInstallationHandler,
+} from "../../providers/gitlab/index.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
 import type {
   ProviderRegistration,
@@ -60,6 +64,7 @@ type SlackInstallationHandler = Parameters<
 type LinearInstallationHandler = Parameters<
   NonNullable<ProviderRuntimeOwner["onLinearInstallation"]>
 >[0];
+const GITLAB_SELECTION_ACTIONS = ["namespaces", "select", "cancel"] as const;
 
 interface DynamicProviderRuntimeOptions {
   database: Database;
@@ -75,6 +80,7 @@ interface DynamicProviderRuntimeOptions {
     activateConfiguration: boolean;
     onVerifiedSlackInstallation: SlackInstallationHandler;
     onVerifiedLinearInstallation: LinearInstallationHandler;
+    onVerifiedGitlabInstallation: GitlabInstallationHandler;
   }) => ProviderRegistration;
 }
 
@@ -85,13 +91,15 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     ["slack", emptySlot()],
     ["discord", emptySlot()],
     ["linear", emptySlot()],
+    ["gitlab", emptySlot()],
   ]);
   private readonly stable = new Map<Provider, ProviderRegistration>();
   private slackInstallationHandler: SlackInstallationHandler | undefined;
   private linearInstallationHandler: LinearInstallationHandler | undefined;
+  private gitlabInstallationHandler: GitlabInstallationHandler | undefined;
 
   constructor(private readonly options: DynamicProviderRuntimeOptions) {
-    for (const provider of ["github", "slack", "discord", "linear"] as const) {
+    for (const provider of ["github", "slack", "discord", "linear", "gitlab"] as const) {
       this.stable.set(provider, this.stableRegistration(provider));
     }
   }
@@ -102,6 +110,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       this.stable.get("discord")!,
       this.stable.get("slack")!,
       this.stable.get("linear")!,
+      this.stable.get("gitlab")!,
     ];
   }
 
@@ -123,6 +132,10 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     handler: NonNullable<DynamicProviderRuntime["linearInstallationHandler"]>,
   ): void {
     this.linearInstallationHandler = handler;
+  }
+
+  onGitlabInstallation(handler: GitlabInstallationHandler): void {
+    this.gitlabInstallationHandler = handler;
   }
 
   async prepare(
@@ -233,14 +246,12 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     if (provider === "github" && configuration.provider === "github") {
       return createGitHubRegistration({ ...shared, configuration });
     }
+    const continuing = continuingActivation(activation);
     if (provider === "slack" && configuration.provider === "slack") {
       return createSlackRegistration({
         ...shared,
         configuration,
-        ...(activation?.expectedConfigurationVersion === undefined
-          ? {}
-          : { expectedConfigurationVersion: activation.expectedConfigurationVersion }),
-        activateConfiguration: activation?.activateConfiguration ?? false,
+        ...continuing,
         onVerifiedInstallation: (input) => this.handleSlackInstallation(input),
       });
     }
@@ -258,11 +269,16 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       return createLinearRegistration({
         ...shared,
         configuration,
-        ...(activation?.expectedConfigurationVersion === undefined
-          ? {}
-          : { expectedConfigurationVersion: activation.expectedConfigurationVersion }),
-        activateConfiguration: activation?.activateConfiguration ?? false,
+        ...continuing,
         onVerifiedInstallation: (input) => this.handleLinearInstallation(input),
+      });
+    }
+    if (provider === "gitlab" && configuration.provider === "gitlab") {
+      return createGitlabRegistration({
+        ...shared,
+        configuration,
+        ...continuing,
+        onVerifiedInstallation: (input) => this.handleGitlabInstallation(input),
       });
     }
     throw new Error("provider configuration mismatch");
@@ -289,6 +305,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       activateConfiguration: activation?.activateConfiguration ?? false,
       onVerifiedSlackInstallation: (input) => this.handleSlackInstallation(input),
       onVerifiedLinearInstallation: (input) => this.handleLinearInstallation(input),
+      onVerifiedGitlabInstallation: (input) => this.handleGitlabInstallation(input),
     };
   }
 
@@ -304,6 +321,13 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       throw unavailable("linear_installation_handler_unavailable");
     }
     return this.linearInstallationHandler(input);
+  }
+
+  private handleGitlabInstallation(input: Parameters<GitlabInstallationHandler>[0]): Promise<void> {
+    if (this.gitlabInstallationHandler === undefined) {
+      throw unavailable("gitlab_installation_handler_unavailable");
+    }
+    return this.gitlabInstallationHandler(input);
   }
 
   private stableRegistration(provider: Provider): ProviderRegistration {
@@ -577,7 +601,13 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     action: string,
     request: Request,
   ): Promise<ActiveRegistration | undefined> {
-    if (action !== "callback" && action !== "setup") return slot.active;
+    if (
+      action !== "callback" &&
+      action !== "setup" &&
+      !(GITLAB_SELECTION_ACTIONS as readonly string[]).includes(action)
+    ) {
+      return slot.active;
+    }
     const state = new URL(request.url).searchParams.get("state");
     if (state === null) return slot.active;
     const snapshot = await this.options.database.findConnectionAttemptConfiguration(
@@ -625,6 +655,20 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
   }
 }
 
+/** The activation a save-and-continue provider carries into its candidate registration. */
+function continuingActivation(
+  activation:
+    | { expectedConfigurationVersion: number | undefined; activateConfiguration: boolean }
+    | undefined,
+): { expectedConfigurationVersion?: number; activateConfiguration: boolean } {
+  return {
+    ...(activation?.expectedConfigurationVersion === undefined
+      ? {}
+      : { expectedConfigurationVersion: activation.expectedConfigurationVersion }),
+    activateConfiguration: activation?.activateConfiguration ?? false,
+  };
+}
+
 function emptySlot(): Slot {
   return {
     active: undefined,
@@ -636,6 +680,9 @@ function emptySlot(): Slot {
 
 function actionNames(provider: Provider): readonly string[] {
   if (provider === "github") return ["start", "disconnect", "setup", "callback"];
+  if (provider === "gitlab") {
+    return ["start", "disconnect", "callback", ...GITLAB_SELECTION_ACTIONS, "refresh"];
+  }
   return ["start", "disconnect", "callback"];
 }
 
@@ -643,6 +690,7 @@ function eventNames(provider: Provider): TriggerProvider["eventNames"] {
   if (provider === "slack") return ["slack.mention"];
   if (provider === "discord") return ["discord.mention"];
   if (provider === "linear") return ["linear.issue", "linear.comment"];
+  if (provider === "gitlab") return [];
   return GITHUB_TRIGGER_SOURCE_NAMES;
 }
 

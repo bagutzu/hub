@@ -35,6 +35,7 @@ import {
   decodeEntitlementDenialFailureReason,
   entitlementDenialSummary,
 } from "../entitlements/denial.js";
+import { gitlabConnectionRequiresReauthorization } from "../providers/gitlab/client.js";
 import { linearConnectionRequiresReauthorization } from "../providers/linear/client.js";
 import { hasRequiredSlackScopes } from "../providers/slack/client.js";
 import { resolveRouteTenant } from "./access.js";
@@ -461,6 +462,12 @@ function connectionUsageView(
       linearOrganizationId: connection.linearOrganizationId,
       linearOrganizationName: connection.linearOrganizationName,
       requiresReauthorization: linearConnectionRequiresReauthorization(connection),
+    })),
+    gitlab: connections.gitlab.map((connection) => ({
+      id: connection.id,
+      slug: connection.slug,
+      namespace: connection.namespace,
+      requiresReauthorization: gitlabConnectionRequiresReauthorization(connection),
     })),
   };
 }

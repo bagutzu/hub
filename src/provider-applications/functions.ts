@@ -9,9 +9,10 @@ import {
   type ProviderApplicationOverview,
   type ProviderApplicationSaveResult,
 } from "./index.js";
+import { normalizeGitlabUrl } from "../providers/gitlab/client.js";
 import { providerApplicationSaveFailure, providerHost, providerName } from "./save-failure.js";
 
-const providerSchema = z.enum(["github", "slack", "discord", "linear"]);
+const providerSchema = z.enum(["github", "slack", "discord", "linear", "gitlab"]);
 const surfaceSchema = z.enum(["appSetup", "apps"]).optional();
 const expectedVersionSchema = z.number().int().positive().optional();
 const configurationSchema = z.discriminatedUnion("provider", [
@@ -50,6 +51,25 @@ const configurationSchema = z.discriminatedUnion("provider", [
     clientId: z.string().trim().min(1),
     clientSecret: z.string().min(1),
     webhookSecret: z.string().min(1),
+    expectedVersion: expectedVersionSchema,
+    surface: surfaceSchema,
+  }),
+  z.object({
+    provider: z.literal("gitlab"),
+    url: z
+      .string()
+      .trim()
+      .min(1)
+      .transform((value, context) => {
+        try {
+          return normalizeGitlabUrl(value);
+        } catch {
+          context.addIssue({ code: "custom", message: "invalid GitLab URL" });
+          return z.NEVER;
+        }
+      }),
+    clientId: z.string().trim().min(1),
+    clientSecret: z.string().min(1),
     expectedVersion: expectedVersionSchema,
     surface: surfaceSchema,
   }),
@@ -202,6 +222,7 @@ function sensitiveConfigurationValues(
   if (configuration.provider === "linear") {
     return [configuration.clientSecret, configuration.webhookSecret];
   }
+  if (configuration.provider === "gitlab") return [configuration.clientSecret];
   return [configuration.clientSecret, configuration.botToken];
 }
 
@@ -239,6 +260,15 @@ function normalizedConfiguration(
       clientId: data.clientId,
       clientSecret: data.clientSecret,
       webhookSecret: data.webhookSecret,
+      ...version,
+    };
+  }
+  if (data.provider === "gitlab") {
+    return {
+      provider: data.provider,
+      url: data.url,
+      clientId: data.clientId,
+      clientSecret: data.clientSecret,
       ...version,
     };
   }

@@ -18,7 +18,9 @@ import { SummaryPanel, type SummaryRow } from "../components/app/summary-panel.j
 import { Button } from "../components/ui/button.js";
 import { FieldSet } from "../components/ui/field.js";
 import { Skeleton } from "../components/ui/skeleton.js";
+import { GitlabNamespacePicker } from "../connections/gitlab-namespace-picker.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
+import { connectionReturnCopy } from "../connections/result-contract.js";
 import type { Result } from "../contract/respond.js";
 import { cn } from "../lib/utils.js";
 import {
@@ -67,19 +69,24 @@ export function ProviderSection({
   callbackOrigin,
   surface,
   organizationId,
+  organizationSlug,
   open,
   onOpenChange,
   returned,
+  pendingAttempt,
 }: {
   guide: ProviderGuide;
   view: ProviderApplicationView;
   callbackOrigin: string;
   surface: ProviderApplicationSurface;
   organizationId: string;
+  organizationSlug: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The outcome of an install or authorization that just came back to this section. */
   returned: SectionReturn | undefined;
+  /** A GitLab grant waiting on its namespace choice, when the return brought one back. */
+  pendingAttempt: string | undefined;
 }) {
   const queryClient = useQueryClient();
   const savedSlackTransport = view.identifiers["transport"] === "webhook" ? "webhook" : "socket";
@@ -89,6 +96,7 @@ export function ProviderSection({
   const [replacing, setReplacing] = useState(false);
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const [outcome, setOutcome] = useState<Outcome | undefined>(returned);
+  const [attempt, setAttempt] = useState(pendingAttempt);
   const result = useRef<HTMLDivElement>(null);
   const replace = useRef<HTMLButtonElement>(null);
   const fields = guideFields(activeGuide, callbackOrigin);
@@ -255,27 +263,43 @@ export function ProviderSection({
             saved, and focus that had just landed on a node the phase change unmounts is focus
             dropped on the floor. */}
         <ResultRegion ref={result} guide={activeGuide} outcome={outcome} />
-        {guide.provider === "slack" &&
-        (phase === "guiding" || phase === "replacing" || phase === "blocked") ? (
-          <SlackTransportChoice value={slackTransport} onChange={setSlackTransport} />
-        ) : null}
-        <SectionBody
-          guide={activeGuide}
-          view={view}
-          origin={callbackOrigin}
-          phase={phase}
-          form={form}
-          busy={busy}
-          connecting={connect.isPending || leaving}
-          replaceRef={replace}
-          onConnect={startConnection}
-          onRetry={() => retryDelivery.mutate({})}
-          onReplace={() => {
-            setErrors({});
-            setOutcome(undefined);
-            setReplacing(true);
-          }}
-        />
+        {guide.provider === "gitlab" && attempt !== undefined ? (
+          // The grant is authorized; the only thing left is the group it covers. The setup
+          // steps and the credential form would only say "start over" to someone mid-way.
+          <GitlabNamespacePicker
+            organizationSlug={organizationSlug}
+            attempt={attempt}
+            onSettled={(settled) => {
+              setAttempt(undefined);
+              setOutcome(connectionReturnCopy({ provider: "gitlab", result: settled }));
+              void queryClient.invalidateQueries({ queryKey: ["provider-applications"] });
+            }}
+          />
+        ) : (
+          <>
+            {guide.provider === "slack" &&
+            (phase === "guiding" || phase === "replacing" || phase === "blocked") ? (
+              <SlackTransportChoice value={slackTransport} onChange={setSlackTransport} />
+            ) : null}
+            <SectionBody
+              guide={activeGuide}
+              view={view}
+              origin={callbackOrigin}
+              phase={phase}
+              form={form}
+              busy={busy}
+              connecting={connect.isPending || leaving}
+              replaceRef={replace}
+              onConnect={startConnection}
+              onRetry={() => retryDelivery.mutate({})}
+              onReplace={() => {
+                setErrors({});
+                setOutcome(undefined);
+                setReplacing(true);
+              }}
+            />
+          </>
+        )}
       </div>
     </Disclosure>
   );
@@ -598,7 +622,9 @@ function PasteForm({
                 {...(field.description === undefined ? {} : { description: field.description })}
                 {...(errors[field.name] === undefined ? {} : { error: errors[field.name] })}
                 {...storedDefault(
-                  field.identifier === undefined ? undefined : view.identifiers[field.identifier],
+                  (field.identifier === undefined
+                    ? undefined
+                    : view.identifiers[field.identifier]) ?? field.defaultValue,
                 )}
               />
             ))}

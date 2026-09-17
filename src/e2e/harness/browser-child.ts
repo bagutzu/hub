@@ -15,6 +15,7 @@ import { createGitHubRegistration } from "../../providers/github/index.js";
 import type { ProviderRegistration } from "../../providers/registration.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
 import { createSlackRegistration } from "../../providers/slack/index.js";
+import { createGitlabRegistration } from "../../providers/gitlab/index.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
 import {
   BrowserDiscordBot,
@@ -281,6 +282,13 @@ async function main(): Promise<void> {
             publicBaseUrl,
             configuration: null,
           }),
+          createGitlabRegistration({
+            database,
+            auth,
+            applicationBaseUrl: publicBaseUrl,
+            publicBaseUrl,
+            configuration: null,
+          }),
         ];
   const providers = await providerRuntimeOptions(auth, registrations, {
     database,
@@ -446,6 +454,8 @@ function browserProviderPage(request: Request, publicBaseUrl: string): Response 
     provider = { name: "Slack", callback: "/api/integrations/slack/callback" };
   } else if (url.pathname === "/e2e/providers/linear/authorize") {
     provider = { name: "Linear", callback: "/api/integrations/linear/callback" };
+  } else if (url.pathname === "/e2e/providers/gitlab/authorize") {
+    provider = { name: "GitLab", callback: "/api/integrations/gitlab/callback" };
   }
   if (provider === undefined) return undefined;
   const state = url.searchParams.get("state");
