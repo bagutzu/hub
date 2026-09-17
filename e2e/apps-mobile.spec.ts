@@ -108,10 +108,26 @@ test("the whole app setup journey completes at phone width", async ({ hub }) => 
     await surface.expectNothingClipped();
     await surface.shoot(SHOTS, "apps-11b-linear-connected.mobile");
 
+    await surface.linear.collapse();
+    await surface.gitlab.expand();
+    await surface.gitlab.expectStackedLayout();
+    await surface.gitlab.fillWorkingCredentials();
+    await surface.gitlab.save();
+    await expect(page.getByRole("heading", { name: "Install Paseo in Acme" })).toBeVisible();
+    await page.getByRole("link", { name: "Accept installation" }).click();
+    await surface.gitlab.expectExpanded();
+    await surface.gitlab.expectNothingClipped();
+    await surface.shoot(SHOTS, "apps-11c-gitlab-choose-group.mobile");
+    await surface.chooseGitlabNamespace("acme");
+    await surface.gitlab.expectStatus("Connected");
+    await surface.gitlab.expectSummary({ Application: "GitLab app", Groups: "acme" });
+    await surface.gitlab.expectNothingClipped();
+    await surface.shoot(SHOTS, "apps-11d-gitlab-connected.mobile");
+
     // The way out is a full-width button pinned to the bottom of a phone screen.
     const finish = surface.wayOut("Finish");
     await expect(finish).toBeInViewport();
-    await surface.linear.collapse();
+    await surface.gitlab.collapse();
     await surface.shoot(SHOTS, "apps-12-all-four-connected.mobile");
 
     await surface.leave("Finish");
@@ -123,6 +139,7 @@ test("the whole app setup journey completes at phone width", async ({ hub }) => 
       Slack: "Connected",
       Discord: "Connected",
       Linear: "Connected",
+      GitLab: "Connected",
     });
     await surface.github.expand();
     await surface.github.action("Replace credentials").click();
@@ -159,6 +176,7 @@ test("Slack Socket Mode and Discord read correctly on a phone", async ({ hub }) 
       Slack: "Not set up",
       Discord: "Connected",
       Linear: "Not set up",
+      GitLab: "Not set up",
     });
     // Instance → Apps renders the same sections inside the dashboard shell, whose padding leaves
     // each section narrower still. The generated URLs and the connected result read there too.

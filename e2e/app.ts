@@ -237,7 +237,7 @@ interface ApplicationEnvironmentInput {
   githubApprovalRequired?: boolean;
   providerScenario?: BrowserProviderScenario;
   providerApplications?: boolean;
-  environmentApps?: readonly ("github" | "slack" | "discord" | "linear")[];
+  environmentApps?: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[];
   machineKeyFile: string;
   databaseProfile?: BuiltApplicationOptions["databaseProfile"];
   bootstrap?: BuiltApplicationOptions["bootstrap"];
@@ -335,7 +335,7 @@ async function createTestTls(): Promise<TestTls> {
  * connectable — read-only in the UI is a product rule, not a broken app.
  */
 function environmentAppVariables(
-  providers: readonly ("github" | "slack" | "discord" | "linear")[],
+  providers: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[],
 ): NodeJS.ProcessEnv {
   const variables: NodeJS.ProcessEnv = {};
   if (providers.includes("github")) {
@@ -361,6 +361,10 @@ function environmentAppVariables(
     variables["LINEAR_CLIENT_ID"] = "browser-linear-client";
     variables["LINEAR_CLIENT_SECRET"] = "browser-linear-client-secret";
     variables["LINEAR_WEBHOOK_SECRET"] = "browser-linear-webhook-secret";
+  }
+  if (providers.includes("gitlab")) {
+    variables["GITLAB_CLIENT_ID"] = "browser-gitlab-client";
+    variables["GITLAB_CLIENT_SECRET"] = "browser-gitlab-client-secret";
   }
   return variables;
 }

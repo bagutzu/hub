@@ -109,7 +109,7 @@ describe("pre-provider-app connection upgrade", () => {
         });
 
         assert.deepEqual(failures, []);
-        assert.deepEqual(runtime.published, ["github", "slack", "discord", "linear"]);
+        assert.deepEqual(runtime.published, ["github", "slack", "discord", "linear", "gitlab"]);
         for (const provider of ["github", "slack", "discord"] as const) {
           assert.deepEqual(
             (await inventory.connectedIdentities(provider)).map(
@@ -173,6 +173,12 @@ const ENVIRONMENT_APPLICATIONS = {
     clientId: "linear-client",
     clientSecret: "linear-secret",
     webhookSecret: "linear-webhook-secret",
+  },
+  gitlab: {
+    provider: "gitlab",
+    url: "https://gitlab.example.test",
+    clientId: "gitlab-client",
+    clientSecret: "gitlab-secret",
   },
 } satisfies Record<Provider, ProviderApplicationConfiguration>;
 
@@ -327,6 +333,9 @@ function identity(configuration: ProviderApplicationConfiguration): ProviderAppl
   }
   if (configuration.provider === "linear") {
     return { provider: "linear", id: configuration.clientId, name: "Linear app" };
+  }
+  if (configuration.provider === "gitlab") {
+    return { provider: "gitlab", id: configuration.clientId, name: "GitLab app" };
   }
   return { provider: "discord", id: configuration.applicationId, name: "Discord app" };
 }

@@ -2,6 +2,8 @@ import type { AuthServer } from "../../auth/server.js";
 import type { Database } from "../../db/types.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
 import { createGitHubRegistration } from "../../providers/github/index.js";
+import { createGitlabRegistration } from "../../providers/gitlab/index.js";
+import type { GitlabConnectionClient, GitlabGrant } from "../../providers/gitlab/client.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
 import { createSlackRegistration } from "../../providers/slack/index.js";
 import { createSlackSocketInstallationVerifier } from "../../providers/slack/installation.js";
@@ -54,6 +56,11 @@ export const FIXTURE_APP_CREDENTIALS = {
     clientId: "browser-linear-client",
     clientSecret: "browser-linear-client-secret",
     webhookSecret: "browser-linear-webhook-secret",
+  },
+  gitlab: {
+    url: "https://gitlab.com",
+    clientId: "browser-gitlab-client",
+    clientSecret: "browser-gitlab-client-secret",
   },
 } as const;
 
@@ -134,6 +141,7 @@ export const FIXTURE_APP_IDENTITIES: Readonly<Record<Provider, ProviderApplicati
   discord: { provider: "discord", id: "900", name: "Paseo" },
   slack: { provider: "slack", id: "browser-slack-app", name: "Paseo" },
   linear: { provider: "linear", id: "browser-linear-client", name: "Paseo" },
+  gitlab: { provider: "gitlab", id: "browser-gitlab-client", name: "Paseo" },
 };
 
 /** The identity an environment-configured provider activates with at boot. */
@@ -257,6 +265,9 @@ export function browserRegistrationFactory(fixtures: BrowserProviderApplicationF
     onVerifiedLinearInstallation: NonNullable<
       Parameters<typeof createLinearRegistration>[0]["onVerifiedInstallation"]
     >;
+    onVerifiedGitlabInstallation: NonNullable<
+      Parameters<typeof createGitlabRegistration>[0]["onVerifiedInstallation"]
+    >;
   }): ProviderRegistration => {
     const shared = {
       database: fixtures.database,
@@ -298,6 +309,18 @@ export function browserRegistrationFactory(fixtures: BrowserProviderApplicationF
           : { expectedConfigurationVersion: input.expectedConfigurationVersion }),
         activateConfiguration: input.activateConfiguration,
         onVerifiedInstallation: input.onVerifiedLinearInstallation,
+      });
+    }
+    if (configuration.provider === "gitlab") {
+      return createGitlabRegistration({
+        ...shared,
+        configuration,
+        connectionClient: new BrowserGitlabConnections(input.callbackOrigin),
+        ...(input.expectedConfigurationVersion === undefined
+          ? {}
+          : { expectedConfigurationVersion: input.expectedConfigurationVersion }),
+        activateConfiguration: input.activateConfiguration,
+        onVerifiedInstallation: input.onVerifiedGitlabInstallation,
       });
     }
     return createSlackRegistration({
@@ -343,6 +366,58 @@ class BrowserLinearConnections implements LinearConnectionClient {
 
   revoke(): Promise<void> {
     return Promise.resolve();
+  }
+}
+
+/** GitLab as the browser journey sees it: one grant for one user who maintains one group. */
+export class BrowserGitlabConnections implements GitlabConnectionClient {
+  constructor(private readonly publicBaseUrl: string) {}
+
+  authorizationUrl({ state }: { state: string; challenge: string }): string {
+    const url = new URL("/e2e/providers/gitlab/authorize", this.publicBaseUrl);
+    url.searchParams.set("state", state);
+    return url.toString();
+  }
+
+  exchangeCode({ code }: { code: string; verifier: string }): Promise<GitlabGrant> {
+    if (code !== "accepted") return Promise.reject(new Error("authorization rejected"));
+    return Promise.resolve({
+      accessToken: "gitlab-token",
+      refreshToken: "gitlab-refresh-token",
+      accessTokenExpiresAt: new Date(Date.now() + 7_200_000),
+      scopes: ["api"],
+      user: { id: 7, username: "acme-bot", name: "Acme Bot", namespaceId: 70 },
+    });
+  }
+
+  refresh(): Promise<never> {
+    return Promise.reject(new Error("unused"));
+  }
+
+  revoke(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  listNamespaces() {
+    return Promise.resolve([
+      { id: 42, kind: "group" as const, fullPath: "acme", name: "Acme" },
+      { id: 70, kind: "user" as const, fullPath: "acme-bot", name: "Acme Bot" },
+    ]);
+  }
+
+  listProjects(_token: string, namespace: { id: number }) {
+    return Promise.resolve(
+      namespace.id === 42
+        ? [
+            {
+              projectId: 4201,
+              pathWithNamespace: "acme/paseo",
+              defaultBranch: "main",
+              webUrl: "https://gitlab.com/acme/paseo",
+            },
+          ]
+        : [],
+    );
   }
 }
 

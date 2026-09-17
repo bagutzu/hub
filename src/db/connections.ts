@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import type { Locks } from "./runtime/locks/index.js";
 import type { DatabaseRuntime, DrizzleHandle, TransactionHandle } from "./runtime/index.js";
 import { slugify } from "../slug.js";
@@ -10,10 +10,13 @@ import {
 import * as schema from "./schema.js";
 import type {
   AdvanceGitHubConnectionAttemptInput,
+  AdvanceGitlabConnectionAttemptInput,
   BindDiscordConnectionInput,
   BindGitHubConnectionInput,
+  BindGitlabConnectionInput,
   BindLinearConnectionInput,
   BindSlackConnectionInput,
+  CompleteGitlabProviderApplicationInput,
   CompleteLinearProviderApplicationInput,
   CompleteSlackProviderApplicationInput,
   ConnectionAccountAccess,
@@ -23,6 +26,10 @@ import type {
   ConnectionStartAuthority,
   DiscordConnectionRecord,
   GitHubConnectionRecord,
+  GitlabConnectionRecord,
+  GitlabConnectionRefreshOperation,
+  GitlabProjectInput,
+  GitlabProjectRecord,
   LinearConnectionRecord,
   LinearConnectionRefreshOperation,
   ReadConnectionAttemptInput,
@@ -58,6 +65,7 @@ export class ConnectionRepository {
         returnRoute: input.access.returnRoute,
         userId: input.access.userId,
         sessionId: input.access.sessionId,
+        pkceVerifier: input.pkceVerifier ?? null,
         configurationVersion: input.configurationVersion,
         providerApplicationId: input.providerApplicationId,
         callbackOrigin: input.callbackOrigin,
@@ -243,11 +251,16 @@ export class ConnectionRepository {
       if (providerConfiguration === undefined) {
         await requireCurrentAttempt(transaction, attempt, input.providerApplicationId);
       } else {
-        await requireSlackActivationCandidate(
+        await requireActivationCandidate(
           transaction,
           attempt,
           input.providerApplicationId,
           providerConfiguration,
+          () =>
+            transaction
+              .select({ applicationId: schema.slackConnections.providerApplicationId })
+              .from(schema.slackConnections)
+              .for("update"),
         );
       }
       await lockExternal(this.locks, runtimeTransaction, "slack", input.teamId);
@@ -294,42 +307,10 @@ export class ConnectionRepository {
           .where(eq(schema.slackConnections.id, existing.id));
       }
       if (providerConfiguration !== undefined) {
-        const [stored] = await transaction
-          .select({ version: schema.runtimeProviderConfiguration.version })
-          .from(schema.runtimeProviderConfiguration)
-          .where(eq(schema.runtimeProviderConfiguration.provider, "slack"))
-          .for("update");
-        if (stored?.version !== providerConfiguration.expectedVersion) {
-          const error = new Error("provider configuration changed");
-          error.name = "ProviderConfigurationConflictError";
-          throw error;
-        }
-        if (stored === undefined) {
-          await transaction.insert(schema.runtimeProviderConfiguration).values({
-            provider: "slack",
-            configuration: providerConfiguration.configuration,
-            verifiedExternalIdentity: providerConfiguration.identity,
-            version: 1,
-            verifiedAt: sql`clock_timestamp()`,
-            updatedAt: sql`clock_timestamp()`,
-            updatedByUserId: providerConfiguration.updatedByUserId,
-          });
-        } else {
-          await transaction
-            .update(schema.runtimeProviderConfiguration)
-            .set({
-              configuration: providerConfiguration.configuration,
-              verifiedExternalIdentity: providerConfiguration.identity,
-              version: sql`${schema.runtimeProviderConfiguration.version} + 1`,
-              verifiedAt: sql`clock_timestamp()`,
-              updatedAt: sql`clock_timestamp()`,
-              updatedByUserId: providerConfiguration.updatedByUserId,
-            })
-            .where(eq(schema.runtimeProviderConfiguration.provider, "slack"));
-        }
-        await writeProviderActivation(
+        await persistProviderConfiguration(
           transaction,
           "slack",
+          providerConfiguration,
           input.providerApplicationId,
           attempt.configurationVersion,
         );
@@ -361,11 +342,16 @@ export class ConnectionRepository {
       if (providerConfiguration === undefined) {
         await requireCurrentAttempt(transaction, attempt, input.providerApplicationId);
       } else {
-        await requireLinearActivationCandidate(
+        await requireActivationCandidate(
           transaction,
           attempt,
           input.providerApplicationId,
           providerConfiguration,
+          () =>
+            transaction
+              .select({ applicationId: schema.linearConnections.providerApplicationId })
+              .from(schema.linearConnections)
+              .for("update"),
         );
       }
       await lockExternal(this.locks, runtimeTransaction, "linear", input.linearOrganizationId);
@@ -416,42 +402,10 @@ export class ConnectionRepository {
           .where(eq(schema.linearConnections.id, existing.id));
       }
       if (providerConfiguration !== undefined) {
-        const [stored] = await transaction
-          .select({ version: schema.runtimeProviderConfiguration.version })
-          .from(schema.runtimeProviderConfiguration)
-          .where(eq(schema.runtimeProviderConfiguration.provider, "linear"))
-          .for("update");
-        if (stored?.version !== providerConfiguration.expectedVersion) {
-          const error = new Error("provider configuration changed");
-          error.name = "ProviderConfigurationConflictError";
-          throw error;
-        }
-        if (stored === undefined) {
-          await transaction.insert(schema.runtimeProviderConfiguration).values({
-            provider: "linear",
-            configuration: providerConfiguration.configuration,
-            verifiedExternalIdentity: providerConfiguration.identity,
-            version: 1,
-            verifiedAt: sql`clock_timestamp()`,
-            updatedAt: sql`clock_timestamp()`,
-            updatedByUserId: providerConfiguration.updatedByUserId,
-          });
-        } else {
-          await transaction
-            .update(schema.runtimeProviderConfiguration)
-            .set({
-              configuration: providerConfiguration.configuration,
-              verifiedExternalIdentity: providerConfiguration.identity,
-              version: sql`${schema.runtimeProviderConfiguration.version} + 1`,
-              verifiedAt: sql`clock_timestamp()`,
-              updatedAt: sql`clock_timestamp()`,
-              updatedByUserId: providerConfiguration.updatedByUserId,
-            })
-            .where(eq(schema.runtimeProviderConfiguration.provider, "linear"));
-        }
-        await writeProviderActivation(
+        await persistProviderConfiguration(
           transaction,
           "linear",
+          providerConfiguration,
           input.providerApplicationId,
           attempt.configurationVersion,
         );
@@ -506,6 +460,234 @@ export class ConnectionRepository {
           })
           .where(eq(schema.linearConnections.id, connection.id));
       });
+    });
+  }
+
+  async advanceGitlabAttempt(input: AdvanceGitlabConnectionAttemptInput): Promise<void> {
+    await this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      await lockAccountSession(transaction, input.access);
+      const attempt = await lockAttempt(transaction, input);
+      await lockStoredAuthority(transaction, attempt);
+      await lockProviderApplication(this.locks, runtimeTransaction, attempt.provider);
+      await requireConsumableAttempt(transaction, attempt);
+      await transaction
+        .update(schema.organizationConnectionAttempts)
+        .set({
+          phase: "gitlab_namespace_selection",
+          stateVerifier: input.nextStateVerifier,
+          pkceVerifier: null,
+          candidateGrant: input.grant,
+        })
+        .where(eq(schema.organizationConnectionAttempts.id, attempt.id));
+    });
+  }
+
+  async bindGitlab(input: BindGitlabConnectionInput): Promise<void> {
+    await this.bindGitlabTransition(input);
+  }
+
+  async completeGitlabProviderApplication(
+    input: CompleteGitlabProviderApplicationInput,
+  ): Promise<void> {
+    await this.bindGitlabTransition(input, input.providerConfiguration);
+  }
+
+  private async bindGitlabTransition(
+    input: BindGitlabConnectionInput,
+    providerConfiguration?: CompleteGitlabProviderApplicationInput["providerConfiguration"],
+  ): Promise<void> {
+    await this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      await lockAccountSession(transaction, input.access);
+      const attempt = await lockAttempt(transaction, input);
+      await lockStoredAuthority(transaction, attempt);
+      await lockProviderApplication(this.locks, runtimeTransaction, "gitlab");
+      if (providerConfiguration === undefined) {
+        await requireCurrentAttempt(transaction, attempt, input.providerApplicationId);
+      } else {
+        await requireActivationCandidate(
+          transaction,
+          attempt,
+          input.providerApplicationId,
+          providerConfiguration,
+          () =>
+            transaction
+              .select({ applicationId: schema.gitlabConnections.providerApplicationId })
+              .from(schema.gitlabConnections)
+              .for("update"),
+        );
+      }
+      await lockExternal(this.locks, runtimeTransaction, "gitlab", String(input.namespace.id));
+      const [existing] = await transaction
+        .select({
+          id: schema.gitlabConnections.id,
+          organizationId: schema.gitlabConnections.organizationId,
+        })
+        .from(schema.gitlabConnections)
+        .where(eq(schema.gitlabConnections.namespaceId, input.namespace.id))
+        .for("update");
+      if (existing !== undefined && existing.organizationId !== attempt.organizationId) {
+        throw new ConnectionConflictError();
+      }
+      const tokens = {
+        providerApplicationId: input.providerApplicationId,
+        namespaceKind: input.namespace.kind,
+        namespaceFullPath: input.namespace.fullPath,
+        namespaceName: input.namespace.name,
+        gitlabUserId: input.user.id,
+        gitlabUsername: input.user.username,
+        gitlabUserName: input.user.name,
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken ?? null,
+        accessTokenExpiresAt: input.accessTokenExpiresAt ?? null,
+        scopes: input.scopes,
+        connectedByUserId: attempt.userId,
+      };
+      let connectionId: string;
+      if (existing === undefined) {
+        const [inserted] = await transaction
+          .insert(schema.gitlabConnections)
+          .values({
+            ...tokens,
+            organizationId: attempt.organizationId,
+            namespaceId: input.namespace.id,
+            slug: await uniqueConnectionSlug(
+              transaction,
+              attempt.organizationId,
+              "gitlab",
+              input.namespace.fullPath,
+            ),
+          })
+          .returning({ id: schema.gitlabConnections.id });
+        connectionId = inserted!.id;
+      } else {
+        await transaction
+          .update(schema.gitlabConnections)
+          .set({ ...tokens, updatedAt: sql`clock_timestamp()` })
+          .where(eq(schema.gitlabConnections.id, existing.id));
+        connectionId = existing.id;
+      }
+      await replaceGitlabProjects(
+        transaction,
+        attempt.organizationId,
+        connectionId,
+        input.projects,
+      );
+      if (providerConfiguration !== undefined) {
+        await persistProviderConfiguration(
+          transaction,
+          "gitlab",
+          providerConfiguration,
+          input.providerApplicationId,
+          attempt.configurationVersion,
+        );
+      }
+      await consumeLockedAttempt(transaction, attempt.id);
+    });
+  }
+
+  async withGitlabRefresh<T>(
+    namespaceId: number,
+    operation: GitlabConnectionRefreshOperation<T>,
+  ): Promise<T> {
+    return this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      await lockExternal(this.locks, runtimeTransaction, "gitlab", String(namespaceId));
+      const [row] = await transaction
+        .select()
+        .from(schema.gitlabConnections)
+        .where(eq(schema.gitlabConnections.namespaceId, namespaceId))
+        .for("update");
+      const connection = row === undefined ? undefined : gitlabConnection(row);
+      return operation(connection, async (input) => {
+        if (connection === undefined) throw new Error("GitLab connection unavailable");
+        await transaction
+          .update(schema.gitlabConnections)
+          .set({
+            accessToken: input.accessToken,
+            ...(input.refreshToken === undefined ? {} : { refreshToken: input.refreshToken }),
+            ...(input.accessTokenExpiresAt === undefined
+              ? {}
+              : { accessTokenExpiresAt: input.accessTokenExpiresAt }),
+            ...(input.scopes === undefined ? {} : { scopes: input.scopes }),
+            updatedAt: sql`clock_timestamp()`,
+          })
+          .where(eq(schema.gitlabConnections.id, connection.id));
+      });
+    });
+  }
+
+  async findGitlab(namespaceId: number): Promise<GitlabConnectionRecord | undefined> {
+    const [row] = await this.database
+      .select()
+      .from(schema.gitlabConnections)
+      .where(eq(schema.gitlabConnections.namespaceId, namespaceId))
+      .limit(1);
+    return row === undefined ? undefined : gitlabConnection(row);
+  }
+
+  async findGitlabForOrganization(
+    organizationId: string,
+    connectionId: string,
+  ): Promise<GitlabConnectionRecord | undefined> {
+    const [row] = await this.database
+      .select()
+      .from(schema.gitlabConnections)
+      .where(
+        and(
+          eq(schema.gitlabConnections.organizationId, organizationId),
+          eq(schema.gitlabConnections.id, connectionId),
+        ),
+      )
+      .limit(1);
+    return row === undefined ? undefined : gitlabConnection(row);
+  }
+
+  async listGitlabProjects(
+    organizationId: string,
+    connectionId: string,
+  ): Promise<GitlabProjectRecord[]> {
+    const rows = await this.database
+      .select()
+      .from(schema.gitlabProjects)
+      .where(
+        and(
+          eq(schema.gitlabProjects.organizationId, organizationId),
+          eq(schema.gitlabProjects.connectionId, connectionId),
+        ),
+      )
+      .orderBy(schema.gitlabProjects.pathWithNamespace);
+    return rows.map((row) => ({
+      id: row.id,
+      organizationId: row.organizationId,
+      connectionId: row.connectionId,
+      projectId: row.projectId,
+      pathWithNamespace: row.pathWithNamespace,
+      defaultBranch: row.defaultBranch,
+      webUrl: row.webUrl,
+    }));
+  }
+
+  async replaceGitlabProjects(
+    organizationId: string,
+    connectionId: string,
+    projects: readonly GitlabProjectInput[],
+  ): Promise<void> {
+    await this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      const [connection] = await transaction
+        .select({ id: schema.gitlabConnections.id })
+        .from(schema.gitlabConnections)
+        .where(
+          and(
+            eq(schema.gitlabConnections.id, connectionId),
+            eq(schema.gitlabConnections.organizationId, organizationId),
+          ),
+        )
+        .for("update");
+      if (connection === undefined) throw new ConnectionAccessDeniedError();
+      await replaceGitlabProjects(transaction, organizationId, connectionId, projects);
     });
   }
 
@@ -639,6 +821,33 @@ export class ConnectionRepository {
         return {
           provider,
           linearOrganizationId: connection.linearOrganizationId,
+          accessToken: connection.accessToken,
+        } as const;
+      }
+      if (provider === "gitlab") {
+        const [connection] = await transaction
+          .select({
+            namespaceId: schema.gitlabConnections.namespaceId,
+            accessToken: schema.gitlabConnections.accessToken,
+          })
+          .from(schema.gitlabConnections)
+          .where(
+            and(
+              eq(schema.gitlabConnections.id, connectionId),
+              eq(schema.gitlabConnections.organizationId, access.organizationId),
+            ),
+          )
+          .for("update");
+        if (connection === undefined) throw new ConnectionAccessDeniedError();
+        await transaction
+          .delete(schema.projectTriggerRoutes)
+          .where(eq(schema.projectTriggerRoutes.connectionId, connectionId));
+        await transaction
+          .delete(schema.gitlabConnections)
+          .where(eq(schema.gitlabConnections.id, connectionId));
+        return {
+          provider,
+          namespaceId: connection.namespaceId,
           accessToken: connection.accessToken,
         } as const;
       }
@@ -932,7 +1141,11 @@ async function requireConsumableAttempt(
     await requireCurrentAttempt(transaction, attempt);
     return;
   }
-  if (attempt.provider !== "slack" && attempt.provider !== "linear") {
+  if (
+    attempt.provider !== "slack" &&
+    attempt.provider !== "linear" &&
+    attempt.provider !== "gitlab"
+  ) {
     throw providerApplicationChanged();
   }
   const provider = attempt.provider;
@@ -967,11 +1180,12 @@ async function requireConsumableAttempt(
   }
 }
 
-async function requireSlackActivationCandidate(
+async function requireActivationCandidate(
   transaction: HubTransaction,
   attempt: AttemptRow,
   bindingApplicationId: string,
   providerConfiguration: CompleteSlackProviderApplicationInput["providerConfiguration"],
+  lockConnections: () => Promise<{ applicationId: string | null }[]>,
 ): Promise<void> {
   await requireConsumableAttempt(transaction, attempt);
   if (
@@ -981,35 +1195,85 @@ async function requireSlackActivationCandidate(
   ) {
     throw providerApplicationChanged();
   }
-  const connections = await transaction
-    .select({ applicationId: schema.slackConnections.providerApplicationId })
-    .from(schema.slackConnections)
-    .for("update");
+  const connections = await lockConnections();
   if (connections.some((connection) => connection.applicationId !== bindingApplicationId)) {
     throw providerApplicationChanged();
   }
 }
 
-async function requireLinearActivationCandidate(
+async function persistProviderConfiguration(
   transaction: HubTransaction,
-  attempt: AttemptRow,
-  bindingApplicationId: string,
-  providerConfiguration: CompleteLinearProviderApplicationInput["providerConfiguration"],
+  provider: "slack" | "linear" | "gitlab",
+  providerConfiguration: CompleteSlackProviderApplicationInput["providerConfiguration"],
+  applicationId: string,
+  configurationVersion: number,
 ): Promise<void> {
-  await requireConsumableAttempt(transaction, attempt);
-  if (
-    attempt.providerApplicationId !== bindingApplicationId ||
-    externalIdentityId(providerConfiguration.identity) !== bindingApplicationId ||
-    attempt.configurationVersion !== (providerConfiguration.expectedVersion ?? 0) + 1
-  ) {
-    throw providerApplicationChanged();
-  }
-  const connections = await transaction
-    .select({ applicationId: schema.linearConnections.providerApplicationId })
-    .from(schema.linearConnections)
+  const [stored] = await transaction
+    .select({ version: schema.runtimeProviderConfiguration.version })
+    .from(schema.runtimeProviderConfiguration)
+    .where(eq(schema.runtimeProviderConfiguration.provider, provider))
     .for("update");
-  if (connections.some((connection) => connection.applicationId !== bindingApplicationId)) {
-    throw providerApplicationChanged();
+  if (stored?.version !== providerConfiguration.expectedVersion) {
+    const error = new Error("provider configuration changed");
+    error.name = "ProviderConfigurationConflictError";
+    throw error;
+  }
+  if (stored === undefined) {
+    await transaction.insert(schema.runtimeProviderConfiguration).values({
+      provider,
+      configuration: providerConfiguration.configuration,
+      verifiedExternalIdentity: providerConfiguration.identity,
+      version: 1,
+      verifiedAt: sql`clock_timestamp()`,
+      updatedAt: sql`clock_timestamp()`,
+      updatedByUserId: providerConfiguration.updatedByUserId,
+    });
+  } else {
+    await transaction
+      .update(schema.runtimeProviderConfiguration)
+      .set({
+        configuration: providerConfiguration.configuration,
+        verifiedExternalIdentity: providerConfiguration.identity,
+        version: sql`${schema.runtimeProviderConfiguration.version} + 1`,
+        verifiedAt: sql`clock_timestamp()`,
+        updatedAt: sql`clock_timestamp()`,
+        updatedByUserId: providerConfiguration.updatedByUserId,
+      })
+      .where(eq(schema.runtimeProviderConfiguration.provider, provider));
+  }
+  await writeProviderActivation(transaction, provider, applicationId, configurationVersion);
+}
+
+async function replaceGitlabProjects(
+  transaction: HubTransaction,
+  organizationId: string,
+  connectionId: string,
+  projects: readonly GitlabProjectInput[],
+): Promise<void> {
+  const keep = projects.map((project) => project.projectId);
+  await transaction
+    .delete(schema.gitlabProjects)
+    .where(
+      keep.length === 0
+        ? eq(schema.gitlabProjects.connectionId, connectionId)
+        : and(
+            eq(schema.gitlabProjects.connectionId, connectionId),
+            notInArray(schema.gitlabProjects.projectId, keep),
+          ),
+    );
+  for (const project of projects) {
+    await transaction
+      .insert(schema.gitlabProjects)
+      .values({ organizationId, connectionId, ...project })
+      .onConflictDoUpdate({
+        target: [schema.gitlabProjects.connectionId, schema.gitlabProjects.projectId],
+        set: {
+          pathWithNamespace: project.pathWithNamespace,
+          defaultBranch: project.defaultBranch,
+          webUrl: project.webUrl,
+          updatedAt: sql`clock_timestamp()`,
+        },
+      });
   }
 }
 
@@ -1047,13 +1311,14 @@ function providerApplicationChanged(): Error {
 async function consumeLockedAttempt(transaction: HubTransaction, attemptId: string): Promise<void> {
   await transaction
     .update(schema.organizationConnectionAttempts)
-    .set({ consumedAt: sql`clock_timestamp()`, pkceVerifier: null })
+    .set({ consumedAt: sql`clock_timestamp()`, pkceVerifier: null, candidateGrant: null })
     .where(eq(schema.organizationConnectionAttempts.id, attemptId));
 }
 
 function initialConnectionAttemptPhase(provider: ConnectionProvider): ConnectionAttemptPhase {
   if (provider === "github") return "github_setup";
   if (provider === "discord") return "discord_authorization";
+  if (provider === "gitlab") return "gitlab_authorization";
   return provider === "slack" ? "slack_authorization" : "linear_authorization";
 }
 
@@ -1068,6 +1333,7 @@ function toAttempt(row: AttemptRow): ConnectionAttemptRecord {
     sessionId: row.sessionId,
     candidateExternalId: row.candidateExternalId,
     pkceVerifier: row.pkceVerifier,
+    candidateGrant: row.candidateGrant,
     configurationVersion: row.configurationVersion,
     providerApplicationId: row.providerApplicationId,
     callbackOrigin: row.callbackOrigin,
@@ -1137,6 +1403,28 @@ function linearConnection(
   };
 }
 
+function gitlabConnection(
+  row: typeof schema.gitlabConnections.$inferSelect,
+): GitlabConnectionRecord {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    slug: row.slug,
+    providerApplicationId: row.providerApplicationId,
+    namespace: {
+      id: row.namespaceId,
+      kind: row.namespaceKind,
+      fullPath: row.namespaceFullPath,
+      name: row.namespaceName,
+    },
+    user: { id: row.gitlabUserId, username: row.gitlabUsername, name: row.gitlabUserName },
+    accessToken: row.accessToken,
+    refreshToken: row.refreshToken,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+    scopes: row.scopes,
+  };
+}
+
 async function uniqueConnectionSlug(
   transaction: HubTransaction,
   organizationId: string,
@@ -1153,6 +1441,8 @@ async function uniqueConnectionSlug(
       select slug from discord_connections where organization_id = ${organizationId}
       union all
       select slug from linear_connections where organization_id = ${organizationId}
+      union all
+      select slug from gitlab_connections where organization_id = ${organizationId}
     ) slugs
     where slug = ${base} or slug like ${`${base}-%`}
     order by slug
