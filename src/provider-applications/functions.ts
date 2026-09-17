@@ -70,6 +70,7 @@ const configurationSchema = z.discriminatedUnion("provider", [
       }),
     clientId: z.string().trim().min(1),
     clientSecret: z.string().min(1),
+    webhookSecret: z.string().trim().min(1).optional(),
     expectedVersion: expectedVersionSchema,
     surface: surfaceSchema,
   }),
@@ -222,7 +223,12 @@ function sensitiveConfigurationValues(
   if (configuration.provider === "linear") {
     return [configuration.clientSecret, configuration.webhookSecret];
   }
-  if (configuration.provider === "gitlab") return [configuration.clientSecret];
+  if (configuration.provider === "gitlab") {
+    return [
+      configuration.clientSecret,
+      ...(configuration.webhookSecret === undefined ? [] : [configuration.webhookSecret]),
+    ];
+  }
   return [configuration.clientSecret, configuration.botToken];
 }
 
@@ -269,6 +275,7 @@ function normalizedConfiguration(
       url: data.url,
       clientId: data.clientId,
       clientSecret: data.clientSecret,
+      ...(data.webhookSecret === undefined ? {} : { webhookSecret: data.webhookSecret }),
       ...version,
     };
   }

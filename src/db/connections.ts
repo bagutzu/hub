@@ -669,6 +669,25 @@ export class ConnectionRepository {
     }));
   }
 
+  async recordGitlabProject(
+    project: GitlabProjectInput,
+  ): Promise<GitlabConnectionRecord | undefined> {
+    return this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      const [row] = await transaction
+        .select()
+        .from(schema.gitlabConnections)
+        .where(
+          sql`${schema.gitlabConnections.namespaceFullPath} || '/' = left(${project.pathWithNamespace}, length(${schema.gitlabConnections.namespaceFullPath}) + 1)`,
+        )
+        .orderBy(sql`length(${schema.gitlabConnections.namespaceFullPath}) desc`)
+        .limit(1);
+      if (row === undefined) return undefined;
+      await upsertGitlabProject(transaction, row.organizationId, row.id, project);
+      return gitlabConnection(row);
+    });
+  }
+
   async replaceGitlabProjects(
     organizationId: string,
     connectionId: string,
@@ -1262,19 +1281,28 @@ async function replaceGitlabProjects(
           ),
     );
   for (const project of projects) {
-    await transaction
-      .insert(schema.gitlabProjects)
-      .values({ organizationId, connectionId, ...project })
-      .onConflictDoUpdate({
-        target: [schema.gitlabProjects.connectionId, schema.gitlabProjects.projectId],
-        set: {
-          pathWithNamespace: project.pathWithNamespace,
-          defaultBranch: project.defaultBranch,
-          webUrl: project.webUrl,
-          updatedAt: sql`clock_timestamp()`,
-        },
-      });
+    await upsertGitlabProject(transaction, organizationId, connectionId, project);
   }
+}
+
+async function upsertGitlabProject(
+  transaction: HubTransaction,
+  organizationId: string,
+  connectionId: string,
+  project: GitlabProjectInput,
+): Promise<void> {
+  await transaction
+    .insert(schema.gitlabProjects)
+    .values({ organizationId, connectionId, ...project })
+    .onConflictDoUpdate({
+      target: [schema.gitlabProjects.connectionId, schema.gitlabProjects.projectId],
+      set: {
+        pathWithNamespace: project.pathWithNamespace,
+        defaultBranch: project.defaultBranch,
+        webUrl: project.webUrl,
+        updatedAt: sql`clock_timestamp()`,
+      },
+    });
 }
 
 async function writeProviderActivation(

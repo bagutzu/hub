@@ -716,6 +716,11 @@ export interface AcceptLinearEventInput extends ProviderEventEvidence {
   projectId?: string;
 }
 
+export interface AcceptGitlabEventInput extends ProviderEventEvidence {
+  namespaceId: number;
+  projectId: number;
+}
+
 export interface PersistManualEventInput extends InsertProviderEventInput {
   organizationId: string;
   projectId: string;
@@ -1342,6 +1347,7 @@ export interface Database {
   acceptDiscordEvent(input: AcceptDiscordEventInput): Promise<ProviderEventAcceptance>;
   acceptSlackEvent(input: AcceptSlackEventInput): Promise<ProviderEventAcceptance>;
   acceptLinearEvent(input: AcceptLinearEventInput): Promise<ProviderEventAcceptance>;
+  acceptGitlabEvent(input: AcceptGitlabEventInput): Promise<ProviderEventAcceptance>;
   persistManualEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
   claimGitHubLifecycleReceipt(
     input: GitHubLifecycleReceiptClaimInput,
@@ -1671,6 +1677,11 @@ export interface Database {
     connectionId: string,
   ): Promise<GitlabConnectionRecord | undefined>;
   listGitlabProjects(organizationId: string, connectionId: string): Promise<GitlabProjectRecord[]>;
+  /**
+   * The connection whose namespace covers the project, by the longest namespace path that
+   * prefixes it, with the project recorded under that connection as a webhook just showed it.
+   */
+  recordGitlabProject(project: GitlabProjectInput): Promise<GitlabConnectionRecord | undefined>;
   replaceGitlabProjects(
     organizationId: string,
     connectionId: string,

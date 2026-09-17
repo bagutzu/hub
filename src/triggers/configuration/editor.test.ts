@@ -335,6 +335,9 @@ test.each([
   "linear.issue_assigned",
   "linear.comment_created",
   "linear.issue_entered_scope",
+  "gitlab.merge_request_created",
+  "gitlab.issue_comment_created",
+  "gitlab.note",
 ])("edits supported event %s", (event) => {
   expect(projectTriggerForm(ADVANCED.replace("slack.mention", event)).status).toBe("editable");
 });

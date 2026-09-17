@@ -66,6 +66,8 @@ export interface GitlabProviderApplicationConfiguration {
   url: string;
   clientId: string;
   clientSecret: string;
+  /** The `whsec_` token every project hook signs with. Absent until event triggers are set up. */
+  webhookSecret?: string;
   expectedVersion?: number;
 }
 
@@ -691,13 +693,15 @@ function providerStatus(
 }
 
 /**
- * GitHub admits a delivery only when it can check the signature, so an App saved without a
- * webhook secret has repository access and no event triggers. Slack and Linear signing secrets
- * are part of their credentials, and Discord and GitLab never deliver anything here.
+ * GitHub and GitLab admit a delivery only when they can check the signature, so an app saved
+ * without a webhook secret has repository access and no event triggers. Slack and Linear signing
+ * secrets are part of their credentials, and Discord never delivers anything here.
  */
 function acceptsEvents(configuration: ProviderApplicationConfiguration | undefined): boolean {
   if (configuration === undefined) return false;
-  if (configuration.provider === "github") return (configuration.webhookSecret ?? "") !== "";
+  if (configuration.provider === "github" || configuration.provider === "gitlab") {
+    return (configuration.webhookSecret ?? "") !== "";
+  }
   return configuration.provider === "slack" || configuration.provider === "linear";
 }
 

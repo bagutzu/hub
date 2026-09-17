@@ -331,6 +331,7 @@ function configurationResourcesResponse(
         discord: result.discord,
         slack: result.slack,
         linear: result.linear,
+        gitlab: result.gitlab,
       })
     : infrastructureProblem(requestId);
 }
