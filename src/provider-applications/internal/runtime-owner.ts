@@ -412,6 +412,38 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
             },
           }
         : {}),
+      ...(provider === "gitlab"
+        ? {
+            integration: {
+              resolve: (
+                ...args: Parameters<NonNullable<ProviderRegistration["integration"]>["resolve"]>
+              ) => {
+                const active = slot.active;
+                const integration = active?.registration.integration;
+                if (active === undefined || integration === undefined) {
+                  throw unavailable("gitlab_integration_unavailable");
+                }
+                return this.withLease(active, () => integration.resolve(...args));
+              },
+              gitlabAuthority: {
+                lease: (
+                  input: Parameters<
+                    NonNullable<
+                      NonNullable<ProviderRegistration["integration"]>["gitlabAuthority"]
+                    >["lease"]
+                  >[0],
+                ) => {
+                  const active = slot.active;
+                  const authority = active?.registration.integration?.gitlabAuthority;
+                  if (active === undefined || authority === undefined) {
+                    throw unavailable("gitlab_authority_unavailable");
+                  }
+                  return this.withLease(active, () => authority.lease(input));
+                },
+              },
+            },
+          }
+        : {}),
       triggerProviders: [
         (resources) => {
           slot.triggerResources = resources;
