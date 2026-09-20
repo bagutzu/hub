@@ -487,6 +487,41 @@ describe("workflow compiler", () => {
     },
   );
 
+  it("compiles a GitLab step authority as the connection and nothing else", () => {
+    const raw = configuration();
+    Reflect.set(raw.triggers[0]!.steps[0]!, "gitlab", { connection: "acme-gitlab" });
+
+    const compiled = compileHubConfig(raw);
+    assert.deepEqual(compiled.triggers[0]?.steps[0]?.gitlab, { connection: "acme-gitlab" });
+  });
+
+  it.each(["GITLAB_TOKEN", "GITLAB_HOST", "GIT_CONFIG_KEY_0", "GIT_TERMINAL_PROMPT"])(
+    "rejects reserved GitLab environment key %s",
+    (key) => {
+      const raw = configuration();
+      const step = raw.triggers[0]!.steps[0]!;
+      Reflect.set(step, "env", { [key]: "user-authored" });
+      Reflect.set(step, "gitlab", { connection: "acme-gitlab" });
+
+      assert.throws(() => compileHubConfig(raw), /reserved by the step-level gitlab authority/iu);
+    },
+  );
+
+  it("refuses both forge authorities on one step, which write the same Git configuration", () => {
+    const raw = configuration();
+    const step = raw.triggers[0]!.steps[0]!;
+    Reflect.set(step, "github", {
+      connection: "getpaseo-github",
+      repositories: ["getpaseo/paseo"],
+    });
+    Reflect.set(step, "gitlab", { connection: "acme-gitlab" });
+
+    assert.throws(
+      () => compileHubConfig(raw),
+      /github and gitlab authority cannot be used on the same step/iu,
+    );
+  });
+
   it("rejects duplicate IDs, unknown references, forward references, and value cycles", () => {
     const trigger = configuration().triggers[0]!;
     assert.throws(

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { CompiledGitHubAuthority } from "../config/github-authority.js";
+import type { CompiledGitlabAuthority } from "../config/gitlab-authority.js";
 import {
   parseConnectionTemplate,
   resolveConnectionTemplate,
@@ -11,7 +12,10 @@ import type {
   ConnectionTokenLease,
 } from "../config/connections.js";
 import type { Database } from "../db/types.js";
-import type { GitHubAuthorityRegistration } from "../providers/registration.js";
+import type {
+  GitHubAuthorityRegistration,
+  GitlabAuthorityRegistration,
+} from "../providers/registration.js";
 import { reportFailure } from "../failures/index.js";
 import type { ExecutionCredentialLease } from "./internal/store.js";
 export { ExecutionAuthorityRepository } from "./internal/store.js";
@@ -42,6 +46,7 @@ export interface ExecutionAuthorityMaterialization {
   triggerContext: unknown;
   env?: Readonly<Record<string, string>> | undefined;
   github?: CompiledGitHubAuthority | undefined;
+  gitlab?: CompiledGitlabAuthority | undefined;
 }
 export interface MaterializedExecutionAuthority {
   env: Record<string, string>;
@@ -69,6 +74,7 @@ export interface CreateExecutionAuthorityOptions {
   >;
   connectionsForProject: (projectId: string) => ConnectionResolver;
   githubAuthority?: GitHubAuthorityRegistration | undefined;
+  gitlabAuthority?: GitlabAuthorityRegistration | undefined;
   clock?: ExecutionAuthorityClock | undefined;
   isExecutionActive: (executionId: string) => Promise<boolean>;
   logger?: Pick<Logger, "warn" | "error">;
@@ -189,6 +195,19 @@ export function createExecutionAuthority(
         );
         Object.assign(env, githubEnvironment(github.botUserId, github.botLogin, github.token));
       }
+      if (input.gitlab) {
+        if (!options.gitlabAuthority)
+          throw authorityError(
+            "gitlab_authority_unavailable",
+            "GitLab step authority is unavailable",
+          );
+        const gitlab = await options.gitlabAuthority.lease({
+          projectId: input.projectId,
+          connectionSlug: input.gitlab.connection,
+        });
+        await register({ provider: "gitlab", token: gitlab.token, expiresAt: gitlab.expiresAt });
+        Object.assign(env, gitlabEnvironment(gitlab));
+      }
       await assertActive();
       // A concurrent launch may have won. Keep its environment and revoke only our unused tokens.
       const committed = await store.commit({
@@ -228,6 +247,7 @@ export function createExecutionAuthority(
   async function canResume(input: ExecutionAuthorityMaterialization): Promise<boolean> {
     if (
       input.github === undefined &&
+      input.gitlab === undefined &&
       !Object.values(input.env ?? {}).some((value) => parseConnectionTemplate(value).length > 0)
     )
       return true;
@@ -352,6 +372,9 @@ export function createExecutionAuthority(
   }
 
   async function revokeToken(lease: ExecutionCredentialLease): Promise<boolean> {
+    // A GitLab token belongs to the connection and is shared by every step on it: refreshing it
+    // to end one lease would cut the others off. The lease deadline is the whole boundary.
+    if (lease.provider === "gitlab") return true;
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
@@ -433,6 +456,37 @@ function repositoriesForAuthority(
     "github_authority_scope_invalid",
     "github.repositories is required for this trigger source; Hub cannot safely expand authority to all installation repositories",
   );
+}
+
+/**
+ * `oauth2` is the user name GitLab expects for an OAuth token over HTTPS, and the helper reads
+ * the token from the environment so it is never written to a file.
+ */
+function gitlabEnvironment(lease: {
+  token: string;
+  host: string;
+  userId: number;
+  username: string;
+  name: string;
+}): Record<string, string> {
+  return {
+    GITLAB_TOKEN: lease.token,
+    GITLAB_HOST: lease.host,
+    GIT_CONFIG_COUNT: "5",
+    GIT_CONFIG_KEY_0: "user.name",
+    GIT_CONFIG_VALUE_0: lease.name.length > 0 ? lease.name : lease.username,
+    GIT_CONFIG_KEY_1: "user.email",
+    GIT_CONFIG_VALUE_1: `${String(lease.userId)}-${lease.username}@users.noreply.${lease.host}`,
+    GIT_CONFIG_KEY_2: `url.https://${lease.host}/.insteadOf`,
+    GIT_CONFIG_VALUE_2: `git@${lease.host}:`,
+    GIT_CONFIG_KEY_3: `url.https://${lease.host}/.insteadOf`,
+    GIT_CONFIG_VALUE_3: `ssh://git@${lease.host}/`,
+    GIT_CONFIG_KEY_4: `credential.https://${lease.host}.helper`,
+    GIT_CONFIG_VALUE_4: '!f() { echo username=oauth2; echo "password=$GITLAB_TOKEN"; }; f',
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  };
 }
 
 function githubEnvironment(

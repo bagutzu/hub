@@ -32,6 +32,7 @@ import {
   createGitlabApiClient,
   createGitlabConnectionClient,
   gitlabConnectionRequiresReauthorization,
+  normalizeGitlabUrl,
   type GitlabApiClient,
   type GitlabConnectionClient,
   type GitlabGrant,
@@ -151,12 +152,56 @@ export function createGitlabRegistration(
           connectionClient,
           api,
         );
+  const host = new URL(normalizeGitlabUrl(configuration.url)).host;
+  const leaseForSlug = async (
+    projectId: string,
+    connectionSlug: string,
+  ): Promise<{ token: string; expiresAt: number; user: GitlabConnectionRecord["user"] }> => {
+    const project = await database.findProjectById(projectId);
+    const selected =
+      project === undefined
+        ? undefined
+        : (await database.organizationConnectionUsage(project.organizationId)).gitlab.find(
+            (candidate) => candidate.slug === connectionSlug,
+          );
+    if (selected === undefined || gitlabConnectionRequiresReauthorization(selected, new Date())) {
+      throw new Error(`gitlab connection is unavailable: ${connectionSlug}`);
+    }
+    return await api.lease(selected.namespace.id);
+  };
   return {
     configurationSnapshot: {
       version: options.configurationVersion ?? 0,
       callbackOrigin: options.publicBaseUrl,
     },
     connection,
+    integration: {
+      async resolve(projectId, connectionSlug, value, context) {
+        if (value !== "token") {
+          throw new Error(`unsupported gitlab integration value: ${value}`);
+        }
+        const lease = await leaseForSlug(projectId, connectionSlug);
+        await context?.registerToken?.({
+          provider: "gitlab",
+          token: lease.token,
+          expiresAt: lease.expiresAt,
+        });
+        return lease.token;
+      },
+      gitlabAuthority: {
+        async lease(input) {
+          const lease = await leaseForSlug(input.projectId, input.connectionSlug);
+          return {
+            token: lease.token,
+            expiresAt: lease.expiresAt,
+            host,
+            userId: lease.user.id,
+            username: lease.user.username,
+            name: lease.user.name,
+          };
+        },
+      },
+    },
     triggerProviders: [
       ({ configurationStoreForProject }) =>
         createGitlabTriggerProvider({ configurationStoreForProject, reactions: api }),

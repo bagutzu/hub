@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ContinuationSchema } from "../continuation.js";
 import { eventDefinition, isEditorEvent } from "./events.js";
 import { AuthoredGitHubAuthoritySchema } from "../../config/github-authority.js";
+import { AuthoredGitlabAuthoritySchema } from "../../config/gitlab-authority.js";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -107,6 +108,7 @@ export const TriggerRunSchema = z
     startup_timeout: z.string().min(1).optional(),
     env: z.record(z.string().min(1), z.string()).optional(),
     github: AuthoredGitHubAuthoritySchema.optional(),
+    gitlab: AuthoredGitlabAuthoritySchema.optional(),
     output: z
       .object({ schema: z.record(z.string(), z.unknown()) })
       .strict()

@@ -12,6 +12,8 @@ export const DEFAULT_GITLAB_URL = "https://gitlab.com";
 /** Maintainer. Below it a user cannot register the project webhooks a connection needs. */
 const GITLAB_MINIMUM_ACCESS_LEVEL = 40;
 const GITLAB_ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
+// GitLab OAuth access tokens live two hours; a connection stored without an expiry is held to it.
+const GITLAB_ACCESS_TOKEN_LIFETIME_MS = 2 * 60 * 60 * 1000;
 const PAGE_SIZE = 100;
 
 const TokenResponseSchema = z
@@ -103,8 +105,16 @@ interface GitlabAwardTarget {
   noteId: number | null;
 }
 
+export interface GitlabLease {
+  token: string;
+  expiresAt: number;
+  user: { id: number; username: string; name: string };
+}
+
 export interface GitlabApiClient {
   listProjects(namespaceId: number): Promise<GitlabProjectInput[]>;
+  /** The connection's current access token, refreshed if it has expired, with its real expiry. */
+  lease(namespaceId: number): Promise<GitlabLease>;
   createNote(input: {
     namespaceId: number;
     projectId: number;
@@ -324,6 +334,18 @@ export function createGitlabApiClient(options: {
         connection.namespace,
         connection.user.id,
       );
+    },
+    async lease(namespaceId) {
+      const token = await accessTokenFor(namespaceId);
+      const connection = await options.connectionForNamespace(namespaceId);
+      if (connection === undefined) throw new Error("GitLab connection unavailable");
+      return {
+        token,
+        expiresAt:
+          connection.accessTokenExpiresAt?.getTime() ??
+          now().getTime() + GITLAB_ACCESS_TOKEN_LIFETIME_MS,
+        user: connection.user,
+      };
     },
     async createNote({ namespaceId, projectId, item, body }) {
       await send(namespaceId, "POST", `${itemPath(projectId, item)}/notes`, { body });

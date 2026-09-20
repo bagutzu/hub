@@ -10,6 +10,7 @@ import type {
   ConnectionAttemptRecord,
   GitlabConnectionRecord,
   GitlabProjectInput,
+  ProjectRecord,
   StartConnectionAttemptInput,
 } from "../../db/types.js";
 import type { GitlabApiClient, GitlabConnectionClient, GitlabGrant } from "./client.js";
@@ -337,6 +338,50 @@ describe("GitLab registration", () => {
     assert.deepEqual(client.revoked, ["access"]);
   });
 
+  it("leases the connection's own token for a step, and refuses a connection needing reauthorization", async () => {
+    const database = memberDatabase();
+    const connection = gitlabConnection({});
+    database.findProjectById = async (projectId) => testProject(projectId);
+    database.organizationConnectionUsage = async () => ({ ...EMPTY_USAGE, gitlab: [connection] });
+    database.findGitlabConnection = async (namespaceId) =>
+      namespaceId === connection.namespace.id ? connection : undefined;
+    const registration = createGitlabRegistration({
+      database,
+      auth: new RegistrationAuth(),
+      applicationBaseUrl: "https://hub.test",
+      publicBaseUrl: "https://hub.test",
+      configuration: gitlabConfiguration(),
+      connectionClient: new GitlabConnectionFake(),
+    });
+
+    assert.deepEqual(
+      await gitlabAuthorityOf(registration).lease({
+        projectId: "project-1",
+        connectionSlug: "acme-gitlab",
+      }),
+      {
+        token: "access",
+        expiresAt: Date.parse("2030-01-01T00:00:00.000Z"),
+        host: "gitlab.example.test",
+        userId: 7,
+        username: "acme-bot",
+        name: "Acme Bot",
+      },
+    );
+
+    database.organizationConnectionUsage = async () => ({
+      ...EMPTY_USAGE,
+      gitlab: [{ ...connection, scopes: ["read_user"] }],
+    });
+    await assert.rejects(
+      gitlabAuthorityOf(registration).lease({
+        projectId: "project-1",
+        connectionSlug: "acme-gitlab",
+      }),
+      /gitlab connection is unavailable: acme-gitlab/u,
+    );
+  });
+
   it("re-reads a connection's projects on request through the refreshing API client", async () => {
     const database = memberDatabase();
     database.findGitlabConnectionForOrganization = async (organizationId, connectionId) =>
@@ -382,6 +427,28 @@ function gitlabConfiguration() {
 
 function sha256(value: string, encoding: "hex" | "base64url"): string {
   return createHash("sha256").update(value).digest(encoding);
+}
+
+function gitlabAuthorityOf(registration: ReturnType<typeof createGitlabRegistration>) {
+  const authority = registration.integration?.gitlabAuthority;
+  assert.notEqual(authority, undefined);
+  return authority!;
+}
+
+function testProject(id: string): ProjectRecord {
+  const now = new Date(0);
+  return {
+    id,
+    organizationId: "org",
+    name: "Test project",
+    slug: "test-project",
+    status: "active",
+    createdByUserId: null,
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+    activeConfigurationRevisionId: null,
+  };
 }
 
 function memberDatabase() {
@@ -473,6 +540,10 @@ class GitlabConnectionFake implements GitlabConnectionClient {
 class GitlabApiFake implements GitlabApiClient {
   listProjects(): Promise<GitlabProjectInput[]> {
     return Promise.resolve([...PROJECTS]);
+  }
+
+  lease(): Promise<never> {
+    return Promise.reject(new Error("unused"));
   }
 
   createNote(): Promise<never> {
