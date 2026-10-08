@@ -118,6 +118,21 @@ describe("organization trigger store", () => {
     );
   });
 
+  it("accepts a custom provider that extends one that can run unattended", async () => {
+    const database = await enrolledDatabase();
+    const store = new OrganizationTriggerStore(
+      database,
+      "org",
+      catalogAgentValidator({ "codex-work": { modes: ["full-access"] } }),
+    );
+
+    await store.save({
+      yaml: triggerYaml(true).replace("provider: codex", "provider: codex-work"),
+      userId: null,
+    });
+    assert.equal((await store.list()).length, 1);
+  });
+
   it("refuses a new trigger while the target daemon cannot be asked", async () => {
     const database = await enrolledDatabase();
     const store = new OrganizationTriggerStore(database, "org", disconnectedAgentValidator());
