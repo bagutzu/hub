@@ -948,6 +948,7 @@ function buildStepIntent(
       },
       ...(step.env === undefined ? {} : { env: step.env }),
       ...(step.github === undefined ? {} : { github: step.github }),
+      ...(step.gitlab === undefined ? {} : { gitlab: step.gitlab }),
       ...(step.title === undefined
         ? {}
         : { title: renderExecutionTemplate(step.title, executionId) }),
@@ -979,6 +980,7 @@ function buildStepIntent(
               target: environment,
               env: step.env ?? {},
               github: step.github ?? null,
+              gitlab: step.gitlab ?? null,
             },
           },
         }),

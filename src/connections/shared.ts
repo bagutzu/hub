@@ -109,7 +109,8 @@ export async function cancelledConnectionResult(input: {
     | "github_user_authorization"
     | "discord_authorization"
     | "slack_authorization"
-    | "linear_authorization";
+    | "linear_authorization"
+    | "gitlab_authorization";
   state: string;
   applicationBaseUrl: string;
 }): Promise<Response> {
@@ -184,7 +185,7 @@ export function connectionCallbackFailure(input: {
 export function connectionActionFailure(
   error: unknown,
   provider: ConnectionProvider,
-  action: "start" | "disconnect",
+  action: "start" | "disconnect" | "namespaces" | "select" | "cancel" | "refresh",
 ): Response {
   const accessDenied =
     error instanceof ConnectionAccessDeniedError || error instanceof ProductRequestError;

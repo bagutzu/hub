@@ -88,7 +88,7 @@ export interface BuiltApplicationOptions {
   /** Operator-managed provider applications, starting from nothing configured. */
   providerApplications?: boolean;
   /** Providers the instance environment configures, which the surface must render read-only. */
-  environmentApps?: readonly ("github" | "slack" | "discord" | "linear")[];
+  environmentApps?: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[];
   /** Run the built app with direct local TLS for provider journeys that require real HTTPS. */
   https?: boolean;
   /** Terminate HTTPS at a trusted proxy and intentionally omit PASEO_HUB_APP_URL. */
@@ -337,7 +337,7 @@ export class PaseoHub {
   async openAppSetup(input: {
     account: Account;
     providerScenario?: BrowserProviderScenario;
-    environmentApps?: readonly ("github" | "slack" | "discord" | "linear")[];
+    environmentApps?: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[];
     https?: boolean;
     reverseProxy?: boolean;
   }): Promise<AppSetupSession> {
@@ -5239,11 +5239,11 @@ export interface AppSetupSession {
   /** Reaches Apps the way an operator does after onboarding: through the account menu. */
   navigateToApps(): Promise<void>;
   returnFromProvider(
-    provider: "github" | "slack" | "discord" | "linear",
+    provider: "github" | "slack" | "discord" | "linear" | "gitlab",
     result: string,
   ): Promise<void>;
   /** A correctly-signed inbound delivery — the only thing that proves a webhook secret. */
-  seedSignedDelivery(provider: "github" | "slack"): Promise<void>;
+  seedSignedDelivery(provider: "github" | "slack" | "gitlab"): Promise<void>;
   prepareSlackSocketWorkflow(): Promise<void>;
   deliverSlackSocketMention(eventId: string): Promise<void>;
   slackSocketEvidence(eventId: string): Promise<{ receipts: number; runs: number }>;
@@ -5258,8 +5258,45 @@ export interface AppSetupSession {
 async function seedSignedDelivery(
   page: Page,
   origin: string,
-  provider: "github" | "slack",
+  provider: "github" | "slack" | "gitlab",
 ): Promise<void> {
+  if (provider === "gitlab") {
+    const deliveryId = `delivery-${randomUUID()}`;
+    const timestamp = String(Math.floor(Date.now() / 1_000));
+    const body = JSON.stringify({
+      object_kind: "push",
+      event_name: "push",
+      before: "0000000000000000000000000000000000000000",
+      after: "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+      ref: "refs/heads/main",
+      checkout_sha: "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+      user_id: 7,
+      user_name: "Acme Bot",
+      user_username: "acme-bot",
+      project: {
+        id: 4201,
+        path_with_namespace: "acme/paseo",
+        web_url: "https://gitlab.com/acme/paseo",
+        default_branch: "main",
+      },
+      total_commits_count: 1,
+    });
+    const signature = `v1,${createHmac("sha256", "browser-gitlab-webhook-secret")
+      .update(`${deliveryId}.${timestamp}.${body}`)
+      .digest("base64")}`;
+    const response = await page.request.post(`${origin}/api/integrations/gitlab/events`, {
+      data: body,
+      headers: {
+        "content-type": "application/json",
+        "x-gitlab-event": "Push Hook",
+        "webhook-id": deliveryId,
+        "webhook-timestamp": timestamp,
+        "webhook-signature": signature,
+      },
+    });
+    expect(response.ok()).toBe(true);
+    return;
+  }
   if (provider === "github") {
     const body = JSON.stringify({ installation: { id: 42 } });
     const signature = `sha256=${createHmac("sha256", "phase-zero-webhook-secret")

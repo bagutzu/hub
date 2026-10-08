@@ -681,7 +681,7 @@ async function compileTriggers(
         continue;
       }
       const resolvedFilter =
-        provider === "github"
+        provider === "github" || provider === "gitlab"
           ? filter
           : { ...filter, [resourceField(provider)]: resolved.resourceId };
       const nextFilter: CompiledTriggerFilter = {
@@ -721,7 +721,8 @@ function providerForEvent(eventName: string): ConnectionProvider | undefined {
   return provider === "github" ||
     provider === "slack" ||
     provider === "discord" ||
-    provider === "linear"
+    provider === "linear" ||
+    provider === "gitlab"
     ? provider
     : undefined;
 }
@@ -781,6 +782,14 @@ async function resolveResource(
     if (connections.length !== 1) return undefined;
     return { connectionId: connections[0]!.id, resourceId: resource };
   }
+  if (provider === "gitlab") {
+    const projects = (await gitlabProjects(database, organizationId, allowedConnectionIds)).filter(
+      (project) => project.pathWithNamespace === resource,
+    );
+    if (projects.length !== 1) return undefined;
+    const project = projects[0]!;
+    return { connectionId: project.connectionId, resourceId: String(project.projectId) };
+  }
   const connection = (await database.organizationConnectionUsage(organizationId)).discord.find(
     ({ id, slug }) => slug === resource && allowedConnectionIds.has(id),
   );
@@ -802,13 +811,29 @@ function resourceField(provider: ConnectionProvider): "repo" | "workspace" | "gu
 function providerLabel(provider: ConnectionProvider): string {
   if (provider === "github") return "GitHub";
   if (provider === "slack") return "Slack";
+  if (provider === "gitlab") return "GitLab";
   return provider === "discord" ? "Discord" : "Linear";
 }
 
 function resourceLabel(provider: ConnectionProvider): string {
   if (provider === "github") return "GitHub repository";
   if (provider === "linear") return "Linear project";
+  if (provider === "gitlab") return "GitLab project";
   return `${providerLabel(provider)} connection`;
+}
+
+async function gitlabProjects(
+  database: Database,
+  organizationId: string,
+  connectionIds: ReadonlySet<string>,
+) {
+  return (
+    await Promise.all(
+      [...connectionIds].map((connectionId) =>
+        database.listGitlabProjects(organizationId, connectionId),
+      ),
+    )
+  ).flat();
 }
 
 function formatCandidates(candidates: readonly string[]): string {
@@ -823,6 +848,7 @@ function formatConnectionCandidates(
     guildName?: string;
     teamName?: string;
     linearOrganizationName?: string;
+    namespace?: { fullPath: string };
   }[],
 ): string {
   return formatCandidates(
@@ -833,6 +859,8 @@ function formatConnectionCandidates(
         return `${connection.slug} "${connection.teamName}"`;
       if (provider === "linear" && connection.linearOrganizationName !== undefined)
         return `${connection.slug} "${connection.linearOrganizationName}"`;
+      if (provider === "gitlab" && connection.namespace !== undefined)
+        return `${connection.slug} "${connection.namespace.fullPath}"`;
       return connection.slug;
     }),
   );
@@ -848,10 +876,18 @@ async function formatResourceCandidates(
     guildName?: string;
     teamName?: string;
     linearOrganizationName?: string;
+    namespace?: { fullPath: string };
   }[],
 ): Promise<string> {
-  if (provider !== "github") return formatConnectionCandidates(provider, connections);
   const connectionIds = new Set(connections.map(({ id }) => id));
+  if (provider === "gitlab") {
+    return formatCandidates(
+      (await gitlabProjects(database, organizationId, connectionIds)).map(
+        ({ pathWithNamespace }) => pathWithNamespace,
+      ),
+    );
+  }
+  if (provider !== "github") return formatConnectionCandidates(provider, connections);
   return formatCandidates(
     (await database.listGitHubRepositories(organizationId))
       .filter(({ connectionId }) => connectionIds.has(connectionId))

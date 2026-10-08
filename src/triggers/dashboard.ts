@@ -80,6 +80,12 @@ export class TriggerDashboard {
           provider: "linear" as const,
           label: linearOrganizationName,
         })),
+        ...connections.gitlab.map(({ id, slug, namespace }) => ({
+          id,
+          slug,
+          provider: "gitlab" as const,
+          label: namespace.fullPath,
+        })),
       ],
     };
   }
@@ -199,14 +205,15 @@ function triggerEvent(yaml: string, fallback: string | undefined): string {
 function triggerProvider(
   event: string,
   fallback: string | undefined,
-): "github" | "discord" | "slack" | "linear" | "manual" | "schedule" {
+): "github" | "discord" | "slack" | "linear" | "gitlab" | "manual" | "schedule" {
   const provider = event.split(".")[0] ?? fallback;
   if (
     provider === "schedule" ||
     provider === "github" ||
     provider === "discord" ||
     provider === "slack" ||
-    provider === "linear"
+    provider === "linear" ||
+    provider === "gitlab"
   ) {
     return provider;
   }

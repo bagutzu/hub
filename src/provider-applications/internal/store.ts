@@ -48,11 +48,19 @@ const linearConfigurationSchema = z.object({
   clientSecret: z.string().min(1),
   webhookSecret: z.string().min(1),
 });
+const gitlabConfigurationSchema = z.object({
+  provider: z.literal("gitlab"),
+  url: z.string().min(1),
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  webhookSecret: z.string().min(1).optional(),
+});
 const configurationSchema = z.discriminatedUnion("provider", [
   githubConfigurationSchema,
   slackConfigurationSchema,
   discordConfigurationSchema,
   linearConfigurationSchema,
+  gitlabConfigurationSchema,
 ]);
 
 /** @package */
@@ -62,7 +70,7 @@ export function parseProviderApplicationConfiguration(
   const parsed = configurationSchema.parse(value);
   // An absent optional value stays absent rather than becoming present-and-undefined, which is
   // what the rest of the codebase means by optional.
-  if (parsed.provider !== "github") return parsed;
+  if (parsed.provider !== "github" && parsed.provider !== "gitlab") return parsed;
   const { webhookSecret, ...rest } = parsed;
   return webhookSecret === undefined ? rest : { ...rest, webhookSecret };
 }
@@ -76,6 +84,7 @@ const identitySchema = z.discriminatedUnion("provider", [
   z.object({ provider: z.literal("slack"), id: z.string().min(1), name: z.string().min(1) }),
   z.object({ provider: z.literal("discord"), id: z.string().min(1), name: z.string().min(1) }),
   z.object({ provider: z.literal("linear"), id: z.string().min(1), name: z.string().min(1) }),
+  z.object({ provider: z.literal("gitlab"), id: z.string().min(1), name: z.string().min(1) }),
 ]);
 
 interface ProviderConfigurationRow extends QueryRow {
@@ -102,7 +111,9 @@ export function createProviderApplicationStore(
   locks: Locks,
   connections?: Pick<
     Database,
-    "completeSlackProviderApplication" | "completeLinearProviderApplication"
+    | "completeSlackProviderApplication"
+    | "completeLinearProviderApplication"
+    | "completeGitlabProviderApplication"
   >,
 ): ProviderApplicationStore {
   return {
@@ -203,6 +214,18 @@ export function createProviderApplicationStore(
     completeLinearInstallation(input) {
       if (connections === undefined) throw new Error("Linear application persistence unavailable");
       return connections.completeLinearProviderApplication({
+        ...input.binding,
+        providerConfiguration: {
+          configuration: input.configuration,
+          identity: input.identity,
+          expectedVersion: input.expectedVersion,
+          updatedByUserId: input.updatedByUserId,
+        },
+      });
+    },
+    completeGitlabInstallation(input) {
+      if (connections === undefined) throw new Error("GitLab application persistence unavailable");
+      return connections.completeGitlabProviderApplication({
         ...input.binding,
         providerConfiguration: {
           configuration: input.configuration,
@@ -337,6 +360,7 @@ function connectionTable(provider: Provider): string {
   if (provider === "github") return "github_connections";
   if (provider === "slack") return "slack_connections";
   if (provider === "linear") return "linear_connections";
+  if (provider === "gitlab") return "gitlab_connections";
   return "discord_connections";
 }
 
@@ -359,7 +383,13 @@ function parseRow(row: ProviderConfigurationRow): StoredProviderApplication {
 }
 
 function providerSchema(value: string): Provider {
-  if (value === "github" || value === "slack" || value === "discord" || value === "linear") {
+  if (
+    value === "github" ||
+    value === "slack" ||
+    value === "discord" ||
+    value === "linear" ||
+    value === "gitlab"
+  ) {
     return value;
   }
   throw new Error("stored provider configuration has invalid provider");

@@ -141,6 +141,80 @@ describe("Hub execution authority", () => {
     });
   });
 
+  it("hands a GitLab step the connection's own token, and never revokes it", async () => {
+    const clock = new TestClock();
+    const lease = gitlabAuthorityFake(() => clock.now());
+    const authority = createExecutionAuthority({
+      connectionsForProject: () => async () => "unused",
+      githubAuthority: githubAuthorityFake(),
+      gitlabAuthority: lease,
+      clock,
+    });
+
+    const launch = await authority.materialize({
+      executionId: "execution-gitlab",
+      projectId: "project-1",
+      triggerContext: { provider: "gitlab" },
+      gitlab: { connection: "acme-gitlab" },
+    });
+
+    assert.deepEqual(lease.inputs, [{ projectId: "project-1", connectionSlug: "acme-gitlab" }]);
+    assert.deepEqual(launch.env, {
+      GITLAB_TOKEN: "connection-token-1",
+      GITLAB_HOST: "gitlab.com",
+      GIT_CONFIG_COUNT: "5",
+      GIT_CONFIG_KEY_0: "user.name",
+      GIT_CONFIG_VALUE_0: "Alice",
+      GIT_CONFIG_KEY_1: "user.email",
+      GIT_CONFIG_VALUE_1: "7-alice@users.noreply.gitlab.com",
+      GIT_CONFIG_KEY_2: "url.https://gitlab.com/.insteadOf",
+      GIT_CONFIG_VALUE_2: "git@gitlab.com:",
+      GIT_CONFIG_KEY_3: "url.https://gitlab.com/.insteadOf",
+      GIT_CONFIG_VALUE_3: "ssh://git@gitlab.com/",
+      GIT_CONFIG_KEY_4: "credential.https://gitlab.com.helper",
+      GIT_CONFIG_VALUE_4: '!f() { echo username=oauth2; echo "password=$GITLAB_TOKEN"; }; f',
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TERMINAL_PROMPT: "0",
+    });
+
+    // The token is the connection's, shared with every other step on it: ending this lease
+    // revokes nothing, and the token simply stops being handed out once it expires.
+    await authority.onExecutionTerminal("execution-gitlab");
+    assert.deepEqual(authority.resourceCounts().leases, 0);
+    assert.equal(
+      await authority.canResume({
+        executionId: "execution-gitlab",
+        projectId: "project-1",
+        triggerContext: {},
+        gitlab: { connection: "acme-gitlab" },
+      }),
+      false,
+    );
+  });
+
+  it("holds a GitLab lease no longer than the token it was cut from", async () => {
+    const clock = new TestClock();
+    const lease = gitlabAuthorityFake(() => clock.now());
+    const authority = createExecutionAuthority({
+      connectionsForProject: () => async () => "unused",
+      gitlabAuthority: lease,
+      clock,
+    });
+    const input = {
+      executionId: "execution-expiry",
+      projectId: "project-1",
+      triggerContext: { provider: "gitlab" },
+      gitlab: { connection: "acme-gitlab" },
+    };
+
+    await authority.materialize(input);
+    await clock.advance(119 * 60 * 1000);
+    assert.equal(await authority.canResume(input), true);
+    await clock.advance(2 * 60 * 1000);
+    assert.equal(await authority.canResume(input), false);
+  });
+
   it("defaults an omitted repository list to only the GitHub event repository", async () => {
     const mint = githubAuthorityFake();
     const authority = createExecutionAuthority({
@@ -875,6 +949,26 @@ function githubAuthorityFake(now: () => number = Date.now) {
     },
     async revoke(token: string) {
       revoked.push(token);
+    },
+  };
+}
+
+function gitlabAuthorityFake(now: () => number = Date.now) {
+  const inputs: Array<{ projectId: string; connectionSlug: string }> = [];
+  let count = 0;
+  return {
+    inputs,
+    async lease(input: (typeof inputs)[number]) {
+      inputs.push(input);
+      count += 1;
+      return {
+        token: `connection-token-${count}`,
+        expiresAt: now() + 2 * 60 * 60 * 1000,
+        host: "gitlab.com",
+        userId: 7,
+        username: "alice",
+        name: "Alice",
+      };
     },
   };
 }

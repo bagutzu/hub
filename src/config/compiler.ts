@@ -25,6 +25,14 @@ import {
   validateGitHubAuthority,
   type CompiledGitHubAuthority,
 } from "./github-authority.js";
+import {
+  AuthoredGitlabAuthoritySchema,
+  CompiledGitlabAuthoritySchema,
+  compileGitlabAuthority,
+  isGitlabAuthorityEnvironmentKey,
+  validateGitlabAuthority,
+  type CompiledGitlabAuthority,
+} from "./gitlab-authority.js";
 import { validateConnectionTemplate } from "./connection-template.js";
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/u;
@@ -175,6 +183,7 @@ const StepSchema = z
     prompt: z.array(PromptBlockSchema).min(1),
     env: z.record(z.string().min(1), z.string()).optional(),
     github: AuthoredGitHubAuthoritySchema.optional(),
+    gitlab: AuthoredGitlabAuthoritySchema.optional(),
     if: z.string().min(1).optional(),
     output: z.object({ schema: JsonSchemaSchema }).strict().optional(),
     allow_outputs: z.array(AllowOutputSchema).optional(),
@@ -253,6 +262,7 @@ export interface CompiledStep {
   prompt: readonly CompiledPromptBlock[];
   env?: Readonly<Record<string, string>> | undefined;
   github?: CompiledGitHubAuthority | undefined;
+  gitlab?: CompiledGitlabAuthority | undefined;
   condition?: Expression | undefined;
   output?: { schema: JsonValue } | undefined;
   allowOutputs: readonly { type: string; max?: number | undefined; required: boolean }[];
@@ -403,6 +413,7 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     prompt: z.array(CompiledPromptBlockSchema).min(1),
     env: z.record(z.string(), z.string()).optional(),
     github: CompiledGitHubAuthoritySchema.optional(),
+    gitlab: CompiledGitlabAuthoritySchema.optional(),
     condition: z.custom<Expression>(isExpression).optional(),
     output: z.object({ schema: CompiledJsonSchemaSchema }).strict().optional(),
     allowOutputs: z.array(
@@ -590,7 +601,11 @@ function compileStep(
     step.github === undefined
       ? undefined
       : compileGitHubAuthority(step.github, `trigger ${trigger.name} step ${step.id} github`);
-  validateStepEnvironmentContract(trigger.name, trigger.on, step.id, env, github);
+  const gitlab =
+    step.gitlab === undefined
+      ? undefined
+      : compileGitlabAuthority(step.gitlab, `trigger ${trigger.name} step ${step.id} gitlab`);
+  validateStepEnvironmentContract(trigger.name, trigger.on, step.id, env, github, gitlab);
   const agent = compileAt([...stepPath, "agent"], () =>
     compileAgentSelection(trigger.name, step.id, step.agent, namedAgents),
   );
@@ -614,6 +629,7 @@ function compileStep(
     prompt: compilePromptBlocks(trigger.name, step.id, step.prompt, resolvedPromptPartials),
     ...(env === undefined ? {} : { env }),
     ...(github === undefined ? {} : { github }),
+    ...(gitlab === undefined ? {} : { gitlab }),
     ...(condition === undefined ? {} : { condition }),
     ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
     allowOutputs: (step.allow_outputs ?? []).map((allowOutput) => ({
@@ -1186,7 +1202,14 @@ function validateCompiledContract(config: CompiledHubConfig): void {
         throw new Error(`step ${step.id} references unknown environment ${step.environment}`);
       }
       validateCompiledStepEnvironment(step, trigger.inputs, environments);
-      validateStepEnvironmentContract(trigger.name, trigger.on, step.id, step.env, step.github);
+      validateStepEnvironmentContract(
+        trigger.name,
+        trigger.on,
+        step.id,
+        step.env,
+        step.github,
+        step.gitlab,
+      );
       if (step.idleTimeoutMs > step.maxRuntimeMs) {
         throw new Error(`step ${step.id} idle_timeout must not exceed max_runtime`);
       }
@@ -1266,7 +1289,15 @@ function validateStepEnvironmentContract(
   stepId: string,
   env: Readonly<Record<string, string>> | undefined,
   github: CompiledGitHubAuthority | undefined,
+  gitlab: CompiledGitlabAuthority | undefined,
 ): void {
+  // Both forge authorities write the same git configuration variables, so one step cannot carry
+  // both: the second would silently overwrite the first.
+  if (github !== undefined && gitlab !== undefined) {
+    throw new Error(
+      `trigger ${triggerName} step ${stepId}: github and gitlab authority cannot be used on the same step`,
+    );
+  }
   if (env !== undefined) {
     for (const [key, value] of Object.entries(env)) {
       validateConnectionTemplate(value, `trigger ${triggerName} step ${stepId} env.${key}`);
@@ -1275,7 +1306,15 @@ function validateStepEnvironmentContract(
           `trigger ${triggerName} step ${stepId} env.${key}: reserved by the step-level github authority; remove it from env`,
         );
       }
+      if (gitlab !== undefined && isGitlabAuthorityEnvironmentKey(key)) {
+        throw new Error(
+          `trigger ${triggerName} step ${stepId} env.${key}: reserved by the step-level gitlab authority; remove it from env`,
+        );
+      }
     }
+  }
+  if (gitlab !== undefined) {
+    validateGitlabAuthority(gitlab, `trigger ${triggerName} step ${stepId} gitlab`);
   }
   if (github !== undefined) {
     validateGitHubAuthority(github, `trigger ${triggerName} step ${stepId} github`);

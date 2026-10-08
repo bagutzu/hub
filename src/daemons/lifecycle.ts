@@ -572,7 +572,9 @@ export class DaemonDispatchLifecycle {
     let env: Record<string, string>;
     if (
       this.options.executionAuthority === undefined ||
-      (Object.keys(authoredEnv).length === 0 && materializedIntent.github === undefined)
+      (Object.keys(authoredEnv).length === 0 &&
+        materializedIntent.github === undefined &&
+        materializedIntent.gitlab === undefined)
     ) {
       env = authoredEnv;
     } else {
@@ -583,6 +585,7 @@ export class DaemonDispatchLifecycle {
           triggerContext: materializedIntent.triggerContext,
           ...(Object.keys(authoredEnv).length === 0 ? {} : { env: authoredEnv }),
           ...(materializedIntent.github === undefined ? {} : { github: materializedIntent.github }),
+          ...(materializedIntent.gitlab === undefined ? {} : { gitlab: materializedIntent.gitlab }),
         })
       ).env;
     }
