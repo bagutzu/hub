@@ -501,6 +501,7 @@ function successfulOperations(): PublicOperations {
         triggerRunId: "f83dc934-02a0-4849-8de7-699110be24ed",
         configuredTriggerName: input.trigger,
         workflowStatus: "running",
+        failureReason: null,
       }),
     issueEnrollmentToken: () =>
       Promise.resolve({

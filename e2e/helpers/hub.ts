@@ -2518,6 +2518,7 @@ export class PaseoHub {
         triggerRunId: z.string().uuid(),
         configuredTriggerName: z.literal("deploy"),
         workflowStatus: z.literal("running"),
+        failureReason: z.null(),
       })
       .strict()
       .parse(await response.json());

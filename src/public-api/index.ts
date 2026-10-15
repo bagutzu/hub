@@ -465,6 +465,7 @@ function manualRunResponse(requestId: string, result: DispatchManualRunResult): 
         triggerRunId: result.triggerRunId,
         configuredTriggerName: result.configuredTriggerName,
         workflowStatus: result.workflowStatus,
+        failureReason: result.failureReason,
       });
     case "project_not_found":
       return problem(

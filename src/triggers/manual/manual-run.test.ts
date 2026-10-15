@@ -32,6 +32,7 @@ describe("production Phase 1 manual runs", () => {
     assert.equal(typeof run.triggerRunId, "string");
     assert.equal(run.configuredTriggerName, "deploy");
     assert.equal(run.workflowStatus, "running");
+    assert.equal(run.failureReason, null);
   });
 
   it("keeps duplicate provider delivery idempotent at the enqueue boundary", async () => {
@@ -68,6 +69,13 @@ describe("production Phase 1 manual runs", () => {
       /required output capability unavailable.*discord\.reply/iu,
     );
     assert.equal(await hub.pendingExecutionCount(), 0);
+    const replay = await hub.runCanonicalManual({ deliveryKey: "required-output-public-dispatch" });
+    assert.equal(replay.triggerRunId, run.triggerRunId);
+    assert.equal(replay.workflowStatus, "failed");
+    assert.match(
+      replay.failureReason ?? "",
+      /required output capability unavailable.*discord\.reply/iu,
+    );
   });
 
   it("selects the requested trigger and preserves the version guard", async () => {

@@ -299,6 +299,7 @@ export const DispatchedManualRunSchema = z
     triggerRunId: z.string().uuid(),
     configuredTriggerName: z.string(),
     workflowStatus: z.enum(["running", "succeeded", "failed", "timed_out"]),
+    failureReason: z.string().nullable(),
   })
   .strict()
   .openapi("DispatchedManualRun", {
@@ -308,6 +309,7 @@ export const DispatchedManualRunSchema = z
       triggerRunId: "f83dc934-02a0-4849-8de7-699110be24ed",
       configuredTriggerName: "deploy",
       workflowStatus: "running",
+      failureReason: null,
     },
   });
 
