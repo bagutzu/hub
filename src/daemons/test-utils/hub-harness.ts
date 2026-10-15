@@ -1531,6 +1531,7 @@ export class HubHarness {
     triggerRunId?: string;
     configuredTriggerName?: string;
     workflowStatus?: string;
+    failureReason?: string | null;
   }> {
     const response = await fetch(`${this.origin}/api/v1/manual-runs`, {
       method: "POST",
@@ -1557,6 +1558,7 @@ export class HubHarness {
         triggerRunId: z.string().optional(),
         configuredTriggerName: z.string().optional(),
         workflowStatus: z.string().optional(),
+        failureReason: z.string().nullable().optional(),
         error: z.string().optional(),
         code: z.string().optional(),
       })
@@ -1574,12 +1576,16 @@ export class HubHarness {
         ? {}
         : { configuredTriggerName: body.configuredTriggerName }),
       ...(body.workflowStatus === undefined ? {} : { workflowStatus: body.workflowStatus }),
+      ...(body.failureReason === undefined ? {} : { failureReason: body.failureReason }),
     };
   }
 
-  async runCanonicalManual(input: {
-    deliveryKey: string;
-  }): Promise<{ status: number; triggerRunId?: string }> {
+  async runCanonicalManual(input: { deliveryKey: string }): Promise<{
+    status: number;
+    triggerRunId?: string;
+    workflowStatus?: string;
+    failureReason?: string | null;
+  }> {
     const response = await fetch(`${this.origin}/api/v1/manual-runs`, {
       method: "POST",
       headers: { "content-type": "application/json", ...machineHeaders("valid") },
@@ -1592,12 +1598,18 @@ export class HubHarness {
       }),
     });
     const body = z
-      .object({ triggerRunId: z.string().optional() })
+      .object({
+        triggerRunId: z.string().optional(),
+        workflowStatus: z.string().optional(),
+        failureReason: z.string().nullable().optional(),
+      })
       .passthrough()
       .parse(await response.json());
     return {
       status: response.status,
       ...(body.triggerRunId === undefined ? {} : { triggerRunId: body.triggerRunId }),
+      ...(body.workflowStatus === undefined ? {} : { workflowStatus: body.workflowStatus }),
+      ...(body.failureReason === undefined ? {} : { failureReason: body.failureReason }),
     };
   }
 

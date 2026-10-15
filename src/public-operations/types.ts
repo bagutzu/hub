@@ -101,6 +101,7 @@ export type DispatchManualRunResult =
       triggerRunId: string;
       configuredTriggerName: string;
       workflowStatus: "running" | "succeeded" | "failed" | "timed_out";
+      failureReason: string | null;
     }
   | { status: "project_not_found" }
   | { status: "actor_forbidden" }

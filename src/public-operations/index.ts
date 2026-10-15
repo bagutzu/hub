@@ -288,6 +288,7 @@ async function dispatchManualRun(
     triggerRunId: run.id,
     configuredTriggerName: run.configuredTriggerName,
     workflowStatus: run.status,
+    failureReason: run.failureReason,
   };
 }
 
