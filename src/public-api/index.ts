@@ -331,6 +331,7 @@ function configurationResourcesResponse(
         discord: result.discord,
         slack: result.slack,
         linear: result.linear,
+        gitlab: result.gitlab,
       })
     : infrastructureProblem(requestId);
 }
@@ -465,6 +466,7 @@ function manualRunResponse(requestId: string, result: DispatchManualRunResult): 
         triggerRunId: result.triggerRunId,
         configuredTriggerName: result.configuredTriggerName,
         workflowStatus: result.workflowStatus,
+        failureReason: result.failureReason,
       });
     case "project_not_found":
       return problem(

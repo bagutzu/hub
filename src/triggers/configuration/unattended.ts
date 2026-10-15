@@ -8,11 +8,16 @@
  * other provider at launch with "cannot preapprove exact MCP tools for unattended execution".
  * The daemon's provider snapshot does not carry that flag, so Hub keeps the same list and refuses
  * at save instead. Delete this file once the snapshot says it per provider.
+ *
+ * A custom provider (`claude-work: { extends: claude }`) inherits its base's contract, but the
+ * snapshot does not say what it extends, so Hub reads the base from the ID's first segment.
+ * ponytail: a custom ACP provider named like `claude-x` passes here and the daemon refuses it at
+ * launch instead; drop the guess once the snapshot carries the base or the flag.
  */
 const UNATTENDED_PROVIDERS: ReadonlySet<string> = new Set(["claude", "codex", "opencode"]);
 
 export function supportsUnattendedRuns(provider: string): boolean {
-  return UNATTENDED_PROVIDERS.has(provider);
+  return UNATTENDED_PROVIDERS.has(provider.split("-", 1)[0]!);
 }
 
 /** The daemon's own sentence, said before the run instead of after it. */

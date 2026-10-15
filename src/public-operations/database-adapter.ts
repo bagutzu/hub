@@ -38,6 +38,10 @@ export function createDatabasePublicOperationRepository(
           slug,
           organizationName: linearOrganizationName,
         })),
+        gitlab: connections.gitlab.map(({ slug, namespace }) => ({
+          slug,
+          namespacePath: namespace.fullPath,
+        })),
       };
     },
     async listSetupResources(organizationId) {

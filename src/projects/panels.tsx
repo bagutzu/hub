@@ -21,8 +21,11 @@ import { Section } from "../components/app/section.js";
 import { StatusPill, statusLabel } from "../components/app/status-pill.js";
 import { SummaryPanel, type SummaryRow } from "../components/app/summary-panel.js";
 import { TwoLine } from "../components/app/two-line.js";
+import { GitlabNamespacePicker } from "../connections/gitlab-namespace-picker.js";
 import { ProviderGlyph } from "../connections/provider-glyph.js";
 import { useConnectionReturn } from "../connections/result.js";
+import { refreshGitlabProjects } from "../connections/functions.js";
+import { DropdownMenuItem } from "../components/ui/dropdown-menu.js";
 import { connectionReturnCopy, type ConnectionReturnCopy } from "../connections/result-contract.js";
 import { Button } from "../components/ui/button.js";
 import { DaemonsPanel } from "../daemons/account-daemons.js";
@@ -50,7 +53,7 @@ import {
 } from "./panel-state.js";
 import { archiveProject, activityRunSnapshot, updateProjectSlug } from "./functions.js";
 const CONNECTIONS_DESCRIPTION = "Organization provider connections.";
-const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear"] as const;
+const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear", "gitlab"] as const;
 type ConnectionProviderName = (typeof CONNECTION_PROVIDERS)[number];
 
 function ConnectionsLoading() {
@@ -82,6 +85,25 @@ export function OrganizationConnectionsPanel() {
     mutationKey: CONNECTION_MUTATION_KEY,
     mutationFn: useServerFn(startConnection),
   });
+  const refreshProjects = useMutation({
+    mutationKey: CONNECTION_MUTATION_KEY,
+    mutationFn: useServerFn(refreshGitlabProjects) as (
+      input: Parameters<typeof refreshGitlabProjects>[0],
+    ) => Promise<Result<{ projects: number }>>,
+    onSuccess: async (response) => {
+      if (response.status !== "ok") return;
+      await invalidateOrganization(queryClient, scope.organizationSlug);
+    },
+  });
+  const settleConnection = async (result: "gitlab_connected" | "gitlab_cancelled") => {
+    setReturned({ provider: "gitlab", result });
+    await Promise.all([
+      invalidateOrganization(queryClient, scope.organizationSlug),
+      queryClient.invalidateQueries({
+        queryKey: ["connection-status", tenant.account.id, tenant.organization.id],
+      }),
+    ]);
+  };
   const disconnect = useMutation({
     mutationKey: CONNECTION_MUTATION_KEY,
     mutationFn: useServerFn(disconnectConnection) as (
@@ -117,10 +139,10 @@ export function OrganizationConnectionsPanel() {
     );
   };
   const rows = connectionRows(data);
-  const busy = connect.isPending || disconnect.isPending;
+  const busy = connect.isPending || disconnect.isPending || refreshProjects.isPending;
   const connectionActionLabel = (provider: ConnectionProviderName) => {
     if (
-      (provider === "slack" || provider === "linear") &&
+      (provider === "slack" || provider === "linear" || provider === "gitlab") &&
       status.data[provider].status === "requiresReauthorization"
     ) {
       return "Reauthorize";
@@ -176,7 +198,7 @@ export function OrganizationConnectionsPanel() {
       {returned === undefined ? null : (
         <ConnectionReturnBanner copy={connectionReturnCopy(returned)} />
       )}
-      <CommandError mutations={[connect, disconnect]} />
+      <CommandError mutations={[connect, disconnect, refreshProjects]} />
       <Section>
         {shown.length === 0 ? (
           <EmptyState title="No connections" description={nothingToConnect} />
@@ -192,7 +214,21 @@ export function OrganizationConnectionsPanel() {
               onRevoke={(connectionId) =>
                 disconnect.mutate({ data: { ...scope, provider, connectionId } })
               }
-            />
+              {...(provider === "gitlab"
+                ? {
+                    onRefresh: (connectionId: string) =>
+                      refreshProjects.mutate({ data: { ...scope, connectionId } }),
+                  }
+                : {})}
+            >
+              {provider === "gitlab" && returned?.attempt !== undefined ? (
+                <GitlabNamespacePicker
+                  organizationSlug={scope.organizationSlug}
+                  attempt={returned.attempt}
+                  onSettled={(result) => void settleConnection(result)}
+                />
+              ) : null}
+            </ProviderConnections>
           ))
         )}
       </Section>
@@ -218,6 +254,8 @@ function ProviderConnections({
   busy,
   action,
   onRevoke,
+  onRefresh,
+  children,
 }: {
   provider: ConnectionProviderName;
   connections: readonly ConnectionRecord[];
@@ -225,6 +263,9 @@ function ProviderConnections({
   busy: boolean;
   action: ReactNode;
   onRevoke: (connectionId: string) => void;
+  /** GitLab only: re-read the namespace's projects, since GitLab sends no installation events. */
+  onRefresh?: (connectionId: string) => void;
+  children?: ReactNode;
 }) {
   const label = providerLabel(provider);
   return (
@@ -233,6 +274,7 @@ function ProviderConnections({
       title={label}
       {...(action === undefined ? {} : { action })}
     >
+      {children}
       {connections.length === 0 ? null : (
         <RecordList label={`${label} connections`}>
           {connections.map((connection) => (
@@ -253,6 +295,11 @@ function ProviderConnections({
               actions={
                 canManage ? (
                   <RowActions label={`Actions for ${connection.name}`}>
+                    {onRefresh === undefined ? null : (
+                      <DropdownMenuItem disabled={busy} onSelect={() => onRefresh(connection.id)}>
+                        Refresh projects
+                      </DropdownMenuItem>
+                    )}
                     <ConfirmMenuItem
                       busy={busy}
                       destructive
@@ -715,11 +762,21 @@ function connectionRows(data: OrganizationSnapshot) {
         ? ("requiresReauthorization" as const)
         : ("connected" as const),
     })),
+    ...data.connections.gitlab.map((connection) => ({
+      provider: "gitlab" as const,
+      id: connection.id,
+      name: connection.slug,
+      externalId: `${connection.namespace.kind} ${connection.namespace.fullPath}`,
+      status: connection.requiresReauthorization
+        ? ("requiresReauthorization" as const)
+        : ("connected" as const),
+    })),
   ];
 }
 function providerLabel(provider: ConnectionProviderName) {
   if (provider === "github") return "GitHub";
   if (provider === "discord") return "Discord";
+  if (provider === "gitlab") return "GitLab";
   return provider === "slack" ? "Slack" : "Linear";
 }
 

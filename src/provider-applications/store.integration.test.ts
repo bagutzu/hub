@@ -26,6 +26,7 @@ describe("provider application persistence", () => {
     await exercisePersistence(first);
     await exerciseSlackAtomicTransition(first);
     await exerciseLinearScopeHealth(first);
+    await exerciseGitlabScopeHealth(first);
     await first.runtime.close();
 
     const reopened = await embeddedDatabaseRuntime(root);
@@ -48,6 +49,7 @@ describe("provider application persistence", () => {
       await exercisePersistence(bundle);
       await exerciseSlackAtomicTransition(bundle);
       await exerciseLinearScopeHealth(bundle);
+      await exerciseGitlabScopeHealth(bundle);
       await bundle.runtime.close();
 
       const reopened = await postgresDatabaseRuntime(postgres.getConnectionUri());
@@ -273,6 +275,34 @@ async function exerciseSlackAtomicTransition(bundle: DatabaseRuntimeBundle) {
     "socket",
   );
   assert.equal((await database.findSlackConnection("T2"))?.providerApplicationId, "A1");
+}
+
+async function exerciseGitlabScopeHealth(bundle: DatabaseRuntimeBundle) {
+  const inventory = createProviderApplicationInventory(bundle.runtime);
+  await bundle.runtime.query(
+    `insert into gitlab_connections
+       (organization_id, namespace_id, namespace_kind, namespace_full_path, namespace_name,
+        provider_application_id, slug, gitlab_user_id, gitlab_username, gitlab_user_name,
+        access_token, scopes, connected_by_user_id)
+     values ('org', 42, 'group', 'acme', 'Acme', 'gitlab-app', 'acme-gitlab', 7, 'acme-bot',
+             'Acme Bot', 'gitlab-token', '["read_api"]'::jsonb, 'operator')`,
+  );
+  assert.equal((await inventory.connectedIdentities("gitlab"))[0]?.status, "actionNeeded");
+  assert.equal((await inventory.connectedIdentities("gitlab"))[0]?.name, "acme");
+
+  await bundle.runtime.query(
+    `update gitlab_connections
+     set scopes = '["api"]'::jsonb,
+         access_token_expires_at = '2000-01-01T00:00:00.000Z',
+         refresh_token = null
+     where namespace_id = 42`,
+  );
+  assert.equal((await inventory.connectedIdentities("gitlab"))[0]?.status, "actionNeeded");
+
+  await bundle.runtime.query(
+    `update gitlab_connections set refresh_token = 'gitlab-refresh-token' where namespace_id = 42`,
+  );
+  assert.equal((await inventory.connectedIdentities("gitlab"))[0]?.status, "connected");
 }
 
 async function exerciseLinearScopeHealth(bundle: DatabaseRuntimeBundle) {

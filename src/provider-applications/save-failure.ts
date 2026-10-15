@@ -117,6 +117,7 @@ export function providerHost(provider: Provider): string {
   if (provider === "github") return "api.github.com";
   if (provider === "slack") return "slack.com";
   if (provider === "linear") return "linear.app";
+  if (provider === "gitlab") return "your GitLab instance";
   return "discord.com";
 }
 
@@ -124,6 +125,7 @@ export function providerName(provider: Provider): string {
   if (provider === "github") return "GitHub";
   if (provider === "slack") return "Slack";
   if (provider === "linear") return "Linear";
+  if (provider === "gitlab") return "GitLab";
   return "Discord";
 }
 
@@ -163,6 +165,9 @@ function credentialMessage(provider: Provider, subject: string | undefined): str
   if (provider === "linear") {
     return "Linear rejected these app credentials. Nothing was saved. Check the Client ID and Client Secret in the Linear application, then continue again.";
   }
+  if (provider === "gitlab") {
+    return "GitLab rejected these application credentials. Nothing was saved. Check the GitLab URL, Application ID, and Secret in the GitLab application, then continue again.";
+  }
   if (subject === "appToken") {
     return "Slack rejected the app-level token. Nothing was saved. Open Basic Information → App-Level Tokens, generate one with connections:write, then connect again.";
   }
@@ -188,6 +193,9 @@ function identityMismatchMessage(provider: Provider): string {
   }
   if (provider === "linear") {
     return "The Linear Client ID and Client Secret do not belong to the same application. Nothing was saved. Copy both from one Linear application, then continue again.";
+  }
+  if (provider === "gitlab") {
+    return "The GitLab Application ID and Secret do not belong to the same application. Nothing was saved. Copy both from one GitLab application, then continue again.";
   }
   return "The app-level token and bot token belong to different Slack apps. Nothing was saved. Copy both tokens from the same app, then connect again.";
 }

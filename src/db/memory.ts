@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentExecutionStatus, MachineStatus } from "./schema.js";
 import { parseCompiledHubConfig, type JsonValue } from "../config/compiler.js";
 import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js";
+import { gitlabConnectionRequiresReauthorization } from "../providers/gitlab/client.js";
 import { linearConnectionRequiresReauthorization } from "../providers/linear/client.js";
 import { launchedAgent } from "./mappers.js";
 import type {
@@ -27,7 +28,14 @@ import type {
   AdvanceGitHubConnectionAttemptInput,
   BindDiscordConnectionInput,
   BindGitHubConnectionInput,
+  AdvanceGitlabConnectionAttemptInput,
+  BindGitlabConnectionInput,
   BindLinearConnectionInput,
+  CompleteGitlabProviderApplicationInput,
+  GitlabConnectionRecord,
+  GitlabConnectionRefreshOperation,
+  GitlabProjectInput,
+  GitlabProjectRecord,
   BindSlackConnectionInput,
   CompleteLinearProviderApplicationInput,
   CompleteSlackProviderApplicationInput,
@@ -41,6 +49,7 @@ import type {
   ConfigurationSyncAttemptRecord,
   AcceptDiscordEventInput,
   AcceptGitHubEventInput,
+  AcceptGitlabEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
   DurableProviderEvent,
@@ -220,6 +229,8 @@ class MemoryDatabase implements Database {
   private readonly discordConnections = new Map<string, DiscordConnectionRecord>();
   private readonly slackConnections = new Map<string, SlackConnectionRecord>();
   private readonly linearConnections = new Map<string, LinearConnectionRecord>();
+  private readonly gitlabConnections = new Map<number, GitlabConnectionRecord>();
+  private readonly gitlabProjects = new Map<string, GitlabProjectRecord>();
   private readonly organizationIds: Set<string>;
 
   constructor(private readonly options: MemoryDatabaseOptions = {}) {
@@ -1080,6 +1091,18 @@ class MemoryDatabase implements Database {
       binding?.organizationId,
       binding?.id,
       input.projectId ?? null,
+      reason,
+    );
+  }
+
+  async acceptGitlabEvent(input: AcceptGitlabEventInput): Promise<ProviderEventAcceptance> {
+    const binding = await this.findGitlabConnection(input.namespaceId);
+    const reason = gitlabDropReason(input, binding);
+    return this.acceptMemoryEvent(
+      input,
+      binding?.organizationId,
+      binding?.id,
+      String(input.projectId),
       reason,
     );
   }
@@ -2962,6 +2985,9 @@ class MemoryDatabase implements Database {
       linear: Array.from(this.linearConnections.values()).filter(
         (connection) => connection.organizationId === organizationId,
       ),
+      gitlab: Array.from(this.gitlabConnections.values()).filter(
+        (connection) => connection.organizationId === organizationId,
+      ),
     };
   }
 
@@ -3217,6 +3243,94 @@ class MemoryDatabase implements Database {
     );
   }
 
+  advanceGitlabConnectionAttempt(_input: AdvanceGitlabConnectionAttemptInput): Promise<void> {
+    return connectionPersistenceUnavailable();
+  }
+
+  bindGitlabConnection(_input: BindGitlabConnectionInput): Promise<void> {
+    return connectionPersistenceUnavailable();
+  }
+
+  completeGitlabProviderApplication(_input: CompleteGitlabProviderApplicationInput): Promise<void> {
+    return connectionPersistenceUnavailable();
+  }
+
+  withGitlabConnectionRefresh<T>(
+    namespaceId: number,
+    operation: GitlabConnectionRefreshOperation<T>,
+  ): Promise<T> {
+    return this.withAdvisoryLock(
+      JSON.stringify(["paseo-connection", "gitlab", "external", String(namespaceId)]),
+      async () => {
+        const connection = this.gitlabConnections.get(namespaceId);
+        return operation(connection, async (input) => {
+          const current = this.gitlabConnections.get(namespaceId);
+          if (current === undefined) throw new Error("GitLab connection unavailable");
+          this.gitlabConnections.set(namespaceId, { ...current, ...input });
+        });
+      },
+    );
+  }
+
+  findGitlabConnection(namespaceId: number): Promise<GitlabConnectionRecord | undefined> {
+    return Promise.resolve(this.gitlabConnections.get(namespaceId));
+  }
+
+  findGitlabConnectionForOrganization(
+    organizationId: string,
+    connectionId: string,
+  ): Promise<GitlabConnectionRecord | undefined> {
+    return Promise.resolve(
+      Array.from(this.gitlabConnections.values()).find(
+        (connection) =>
+          connection.id === connectionId && connection.organizationId === organizationId,
+      ),
+    );
+  }
+
+  listGitlabProjects(organizationId: string, connectionId: string): Promise<GitlabProjectRecord[]> {
+    return Promise.resolve(
+      Array.from(this.gitlabProjects.values())
+        .filter(
+          (project) =>
+            project.organizationId === organizationId && project.connectionId === connectionId,
+        )
+        .sort((left, right) => left.pathWithNamespace.localeCompare(right.pathWithNamespace)),
+    );
+  }
+
+  recordGitlabProject(project: GitlabProjectInput): Promise<GitlabConnectionRecord | undefined> {
+    const connection = Array.from(this.gitlabConnections.values())
+      .filter((candidate) =>
+        project.pathWithNamespace.startsWith(`${candidate.namespace.fullPath}/`),
+      )
+      .sort((left, right) => right.namespace.fullPath.length - left.namespace.fullPath.length)[0];
+    if (connection === undefined) return Promise.resolve(undefined);
+    const key = `${connection.id}:${String(project.projectId)}`;
+    this.gitlabProjects.set(key, {
+      id: key,
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      ...project,
+    });
+    return Promise.resolve(connection);
+  }
+
+  replaceGitlabProjects(
+    organizationId: string,
+    connectionId: string,
+    projects: readonly GitlabProjectInput[],
+  ): Promise<void> {
+    for (const [key, project] of this.gitlabProjects) {
+      if (project.connectionId === connectionId) this.gitlabProjects.delete(key);
+    }
+    for (const project of projects) {
+      const key = `${connectionId}:${project.projectId}`;
+      this.gitlabProjects.set(key, { id: key, organizationId, connectionId, ...project });
+    }
+    return Promise.resolve();
+  }
+
   disconnectConnection(
     _provider: ConnectionProvider,
     _connectionId: string,
@@ -3278,11 +3392,7 @@ class MemoryDatabase implements Database {
   }
 
   private async acceptMemoryEvent(
-    input:
-      | AcceptGitHubEventInput
-      | AcceptDiscordEventInput
-      | AcceptSlackEventInput
-      | AcceptLinearEventInput,
+    input: MemoryEventInput,
     organizationId: string | undefined,
     connectionId: string | undefined,
     resourceId: string | null,
@@ -3473,16 +3583,20 @@ function connectionPersistenceUnavailable(): never {
   throw new Error("connection persistence requires PostgreSQL");
 }
 
+type MemoryEventInput =
+  | AcceptGitHubEventInput
+  | AcceptDiscordEventInput
+  | AcceptSlackEventInput
+  | AcceptLinearEventInput
+  | AcceptGitlabEventInput;
+
 function providerForInput(
-  input:
-    | AcceptGitHubEventInput
-    | AcceptDiscordEventInput
-    | AcceptSlackEventInput
-    | AcceptLinearEventInput,
-): "github" | "discord" | "slack" | "linear" {
+  input: MemoryEventInput,
+): "github" | "discord" | "slack" | "linear" | "gitlab" {
   if ("installationId" in input) return "github";
   if ("guildId" in input) return "discord";
-  return "teamId" in input ? "slack" : "linear";
+  if ("teamId" in input) return "slack";
+  return "namespaceId" in input ? "gitlab" : "linear";
 }
 
 function githubDropReason(
@@ -3520,6 +3634,18 @@ function linearDropReason(
   if (input.dropReason !== undefined) return input.dropReason;
   if (binding === undefined) return "linear_unbound";
   if (linearConnectionRequiresReauthorization(binding, input.receivedAt)) {
+    return "configuration_unavailable";
+  }
+  return undefined;
+}
+
+function gitlabDropReason(
+  input: AcceptGitlabEventInput,
+  binding: GitlabConnectionRecord | undefined,
+): string | undefined {
+  if (input.dropReason !== undefined) return input.dropReason;
+  if (binding === undefined) return "gitlab_unbound";
+  if (gitlabConnectionRequiresReauthorization(binding, input.receivedAt)) {
     return "configuration_unavailable";
   }
   return undefined;

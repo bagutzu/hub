@@ -3,6 +3,7 @@ import type { TriggerAgentConfig } from "../triggers/index.js";
 import type { WorktreeTarget } from "../config/index.js";
 import type { JsonValue } from "../config/compiler.js";
 import type { CompiledGitHubAuthority } from "../config/github-authority.js";
+import type { CompiledGitlabAuthority } from "../config/gitlab-authority.js";
 
 export const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
@@ -27,6 +28,7 @@ export interface LaunchMachineIntent {
   environment: DaemonEnvironmentTarget;
   env?: Readonly<Record<string, string>>;
   github?: CompiledGitHubAuthority;
+  gitlab?: CompiledGitlabAuthority;
   /** Authored workspace title, already rendered; absent means Hub's default workspace title. */
   title?: string;
   prompt: string;
@@ -54,6 +56,7 @@ export function buildLaunchMachineIntent(input: {
   environment: DaemonEnvironmentTarget;
   env?: Readonly<Record<string, string>>;
   github?: CompiledGitHubAuthority;
+  gitlab?: CompiledGitlabAuthority;
   title?: string;
   prompt: string;
   agent: TriggerAgentConfig;
@@ -76,6 +79,7 @@ export function buildLaunchMachineIntent(input: {
     environment: input.environment,
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.github === undefined ? {} : { github: input.github }),
+    ...(input.gitlab === undefined ? {} : { gitlab: input.gitlab }),
     ...(input.title === undefined ? {} : { title: input.title }),
     prompt: input.prompt,
     agent: input.agent,

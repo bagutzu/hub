@@ -250,6 +250,7 @@ export const ConfigurationResourcesSchema = z
     discord: z.array(z.object({ slug: z.string(), guildName: z.string() }).strict()),
     slack: z.array(z.object({ slug: z.string(), teamName: z.string() }).strict()),
     linear: z.array(z.object({ slug: z.string(), organizationName: z.string() }).strict()),
+    gitlab: z.array(z.object({ slug: z.string(), namespacePath: z.string() }).strict()),
   })
   .strict()
   .openapi("ConfigurationResources");
@@ -299,6 +300,7 @@ export const DispatchedManualRunSchema = z
     triggerRunId: z.string().uuid(),
     configuredTriggerName: z.string(),
     workflowStatus: z.enum(["running", "succeeded", "failed", "timed_out"]),
+    failureReason: z.string().nullable(),
   })
   .strict()
   .openapi("DispatchedManualRun", {
@@ -308,6 +310,7 @@ export const DispatchedManualRunSchema = z
       triggerRunId: "f83dc934-02a0-4849-8de7-699110be24ed",
       configuredTriggerName: "deploy",
       workflowStatus: "running",
+      failureReason: null,
     },
   });
 

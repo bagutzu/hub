@@ -202,6 +202,133 @@ describe("trigger acceptance persistence", () => {
     await client.close();
     await database.close();
   }, 120_000);
+  it("records a GitLab project under the longest covering namespace and gates on the token", async () => {
+    const database = await createDatabase(databaseUrl);
+    const client = await createPostgresQueryRuntime(databaseUrl);
+    const organizationId = "gitlab-scope-org";
+    const projectId = "50000000-0000-4000-8000-000000000001";
+    const groupConnectionId = "50000000-0000-4000-8000-000000000002";
+    const subgroupConnectionId = "50000000-0000-4000-8000-000000000003";
+
+    await client.query(`
+      insert into organization (id, name, slug)
+      values ('${organizationId}', 'GitLab Scope', 'gitlab-scope');
+      insert into projects (id, organization_id, name, slug)
+      values ('${projectId}', '${organizationId}', 'Default', 'default');
+      insert into gitlab_connections
+        (id, organization_id, namespace_id, namespace_kind, namespace_full_path, namespace_name,
+         provider_application_id, slug, gitlab_user_id, gitlab_username, gitlab_user_name,
+         access_token, refresh_token, scopes)
+      values
+        ('${groupConnectionId}', '${organizationId}', 42, 'group', 'acme', 'Acme',
+         'gitlab-app', 'acme-gitlab', 7, 'acme-bot', 'Acme Bot',
+         'gitlab-access-token', 'gitlab-refresh-token', '["api"]'::jsonb),
+        ('${subgroupConnectionId}', '${organizationId}', 43, 'group', 'acme/platform', 'Platform',
+         'gitlab-app', 'acme-platform-gitlab', 7, 'acme-bot', 'Acme Bot',
+         'gitlab-access-token', 'gitlab-refresh-token', '["api"]'::jsonb);
+    `);
+
+    const covering = await database.recordGitlabProject({
+      projectId: 4201,
+      pathWithNamespace: "acme/platform/api",
+      defaultBranch: "main",
+      webUrl: "https://gitlab.com/acme/platform/api",
+    });
+    assert.equal(covering?.id, subgroupConnectionId);
+    const sibling = await database.recordGitlabProject({
+      projectId: 4202,
+      pathWithNamespace: "acme/web",
+      defaultBranch: "main",
+      webUrl: "https://gitlab.com/acme/web",
+    });
+    assert.equal(sibling?.id, groupConnectionId);
+    assert.equal(
+      await database.recordGitlabProject({
+        projectId: 4203,
+        pathWithNamespace: "acme-corp/web",
+        defaultBranch: null,
+        webUrl: "https://gitlab.com/acme-corp/web",
+      }),
+      undefined,
+    );
+    assert.deepEqual(
+      (await database.listGitlabProjects(organizationId, subgroupConnectionId)).map(
+        ({ projectId: id, pathWithNamespace }) => [id, pathWithNamespace],
+      ),
+      [[4201, "acme/platform/api"]],
+    );
+
+    const revision = await database.insertProjectConfigurationRevision({
+      projectId,
+      sourceKind: "manual",
+      sourceEvidence: { kind: "test" },
+      normalizedConfiguration: { environments: [], triggers: [] },
+      contentHash: "gitlab-scope-config",
+    });
+    await database.activateProjectConfigurationRevision(projectId, revision.id, [
+      {
+        provider: "gitlab",
+        connectionId: subgroupConnectionId,
+        resourceId: "4201",
+        triggerName: "gitlab-note",
+      },
+    ]);
+
+    const accepted = await database.acceptGitlabEvent({
+      namespaceId: 43,
+      projectId: 4201,
+      deliveryId: "gitlab-routed",
+      source: "gitlab.note",
+      payload: {},
+      receivedAt: new Date(1),
+    });
+    assert.equal(accepted.status, "accepted");
+    if (accepted.status === "accepted") {
+      assert.equal(accepted.events[0]?.projectId, projectId);
+      assert.equal(accepted.events[0]?.resourceId, "4201");
+    }
+
+    const unrouted = await database.acceptGitlabEvent({
+      namespaceId: 42,
+      projectId: 4202,
+      deliveryId: "gitlab-unrouted",
+      source: "gitlab.push",
+      payload: {},
+      receivedAt: new Date(2),
+    });
+    assert.equal(unrouted.status, "dropped");
+    if (unrouted.status === "dropped") assert.equal(unrouted.reason, "no_project_route");
+
+    const unbound = await database.acceptGitlabEvent({
+      namespaceId: 99,
+      projectId: 4203,
+      deliveryId: "gitlab-unbound",
+      source: "gitlab.push",
+      payload: {},
+      receivedAt: new Date(3),
+    });
+    assert.equal(unbound.status, "dropped");
+    if (unbound.status === "dropped") assert.equal(unbound.reason, "gitlab_unbound");
+
+    await client.query(
+      `update gitlab_connections
+       set refresh_token = null, access_token_expires_at = '1970-01-01T00:00:00.000Z'
+       where id = '${subgroupConnectionId}'`,
+    );
+    const expired = await database.acceptGitlabEvent({
+      namespaceId: 43,
+      projectId: 4201,
+      deliveryId: "gitlab-expired-without-refresh",
+      source: "gitlab.note",
+      payload: {},
+      receivedAt: new Date(120_000),
+    });
+    assert.equal(expired.status, "dropped");
+    if (expired.status === "dropped") assert.equal(expired.reason, "configuration_unavailable");
+
+    await client.close();
+    await database.close();
+  }, 120_000);
 });
 
 function input(organizationId: string, projectId: string) {

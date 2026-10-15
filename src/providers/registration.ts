@@ -29,6 +29,7 @@ export interface ProviderIntegrationRegistration {
     context?: ConnectionResolutionContext,
   ): Promise<string>;
   githubAuthority?: GitHubAuthorityRegistration;
+  gitlabAuthority?: GitlabAuthorityRegistration;
 }
 
 export interface GitHubAuthorityRegistration {
@@ -44,6 +45,21 @@ export interface GitHubAuthorityRegistration {
     botLogin: string;
   }>;
   revoke(token: string): Promise<void>;
+}
+
+/**
+ * GitLab has no per-step credential: the lease is the connection's own access token, shared by
+ * every step on that connection, and its expiry is the only revocation there is.
+ */
+export interface GitlabAuthorityRegistration {
+  lease(input: { projectId: string; connectionSlug: string }): Promise<{
+    token: string;
+    expiresAt: number;
+    host: string;
+    userId: number;
+    username: string;
+    name: string;
+  }>;
 }
 
 export interface ProviderConnectionRegistration {

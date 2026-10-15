@@ -45,6 +45,7 @@ export interface ConfigurationResources {
   discord: readonly { slug: string; guildName: string }[];
   slack: readonly { slug: string; teamName: string }[];
   linear: readonly { slug: string; organizationName: string }[];
+  gitlab: readonly { slug: string; namespacePath: string }[];
 }
 
 export type ListConfigurationResourcesResult =
@@ -100,6 +101,7 @@ export type DispatchManualRunResult =
       triggerRunId: string;
       configuredTriggerName: string;
       workflowStatus: "running" | "succeeded" | "failed" | "timed_out";
+      failureReason: string | null;
     }
   | { status: "project_not_found" }
   | { status: "actor_forbidden" }

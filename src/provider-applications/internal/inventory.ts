@@ -1,4 +1,5 @@
 import type { DatabaseRuntime, QueryRow } from "../../db/runtime/index.js";
+import { gitlabConnectionRequiresReauthorization } from "../../providers/gitlab/client.js";
 import { linearConnectionRequiresReauthorization } from "../../providers/linear/client.js";
 import { hasRequiredSlackScopes } from "../../providers/slack/client.js";
 import type { Provider, ProviderApplicationInventory } from "../index.js";
@@ -28,7 +29,8 @@ export function createProviderApplicationInventory(
           row.action_needed ||
           (provider === "slack" &&
             (!Array.isArray(row.scopes) || !hasRequiredSlackScopes(row.scopes))) ||
-          (provider === "linear" && linearConnectionActionNeeded(row))
+          (provider === "linear" && linearConnectionActionNeeded(row)) ||
+          (provider === "gitlab" && gitlabConnectionActionNeeded(row))
             ? "actionNeeded"
             : "connected",
       }));
@@ -79,6 +81,7 @@ function connectionTable(provider: Provider): string {
   if (provider === "github") return "github_connections";
   if (provider === "slack") return "slack_connections";
   if (provider === "linear") return "linear_connections";
+  if (provider === "gitlab") return "gitlab_connections";
   return "discord_connections";
 }
 
@@ -101,6 +104,12 @@ function connectionIdentityQuery(provider: Provider): string {
                    false as action_needed, scopes, refresh_token, access_token_expires_at
             from linear_connections order by connected_at`;
   }
+  if (provider === "gitlab") {
+    return `select id::text as id, namespace_full_path as name,
+                   provider_application_id as application_id,
+                   false as action_needed, scopes, refresh_token, access_token_expires_at
+            from gitlab_connections order by connected_at`;
+  }
   return `select id::text as id, guild_name as name,
                  provider_application_id as application_id,
                  false as action_needed, null::jsonb as scopes
@@ -114,6 +123,19 @@ function linearConnectionActionNeeded(row: ConnectionIdentityRow): boolean {
   const accessTokenExpiresAt = optionalDate(row.access_token_expires_at);
   if (accessTokenExpiresAt === undefined) return true;
   return linearConnectionRequiresReauthorization({
+    scopes: row.scopes,
+    refreshToken,
+    accessTokenExpiresAt,
+  });
+}
+
+function gitlabConnectionActionNeeded(row: ConnectionIdentityRow): boolean {
+  if (!isStringArray(row.scopes)) return true;
+  const refreshToken = row.refresh_token;
+  if (refreshToken !== null && typeof refreshToken !== "string") return true;
+  const accessTokenExpiresAt = optionalDate(row.access_token_expires_at);
+  if (accessTokenExpiresAt === undefined) return true;
+  return gitlabConnectionRequiresReauthorization({
     scopes: row.scopes,
     refreshToken,
     accessTokenExpiresAt,

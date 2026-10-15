@@ -2,6 +2,7 @@ import { expect } from "@playwright/test";
 import { test } from "./app.js";
 import {
   GITHUB_EVENT_CREDENTIALS,
+  GITLAB_EVENT_CREDENTIALS,
   SLACK_WEBHOOK_CREDENTIALS,
   WORKING_CREDENTIALS,
 } from "./helpers/apps.js";
@@ -23,7 +24,7 @@ const SAVE = "provider_application.verify_and_save";
 
 async function openSetup(
   hub: PaseoHub,
-  environmentApps?: readonly ("github" | "slack" | "discord" | "linear")[],
+  environmentApps?: readonly ("github" | "slack" | "discord" | "linear" | "gitlab")[],
 ): Promise<AppSetupSession> {
   return await hub.openAppSetup({
     account: OPERATOR,
@@ -46,8 +47,9 @@ test("a first account continues to app setup, and skipping it is durable", async
       Slack: "Not set up",
       Discord: "Not set up",
       Linear: "Not set up",
+      GitLab: "Not set up",
     });
-    // A chooser, not four open manuals. This is also the evidence contract: the screenshot
+    // A chooser, not five open manuals. This is also the evidence contract: the screenshot
     // below is taken before anything on the page has been touched, so it cannot be a shot of a
     // wall of instructions that a `collapse()` call tidied away first.
     for (const section of surface.sections()) await section.expectCollapsed();
@@ -597,6 +599,12 @@ test("every way a provider can send the operator back is answered in that sectio
         focus: "result" as const,
       },
       {
+        provider: "gitlab" as const,
+        result: "gitlab_cancelled",
+        copy: "Authorization cancelled at GitLab. Nothing changed. Start again when you're ready.",
+        focus: "result" as const,
+      },
+      {
         provider: "github" as const,
         result: "something_nobody_mapped",
         copy: "Hub couldn't finish the GitHub connection. Nothing was connected. Start the connection again from this page.",
@@ -612,7 +620,9 @@ test("every way a provider can send the operator back is answered in that sectio
             ? "Slack"
             : outcome.provider === "discord"
               ? "Discord"
-              : "Linear",
+              : outcome.provider === "gitlab"
+                ? "GitLab"
+                : "Linear",
       );
       // The provider's own section opens, takes the keyboard, and says what happened there.
       await section.expectExpanded();
@@ -684,7 +694,7 @@ test("the operator finishes, then manages the same apps from the account menu", 
     https: true,
   });
   try {
-    const { surface, page } = session;
+    const { surface, page, origin } = session;
     await surface.github.expand();
     await surface.github.fillWorkingCredentials();
     await surface.github.save();
@@ -714,6 +724,49 @@ test("the operator finishes, then manages the same apps from the account menu", 
       Events: "Waiting for the first event",
     });
 
+    await surface.gitlab.expand();
+    await expect(
+      surface.gitlab.body().getByRole("heading", { name: "Event triggers" }),
+    ).toBeVisible();
+    await surface.gitlab.expectGeneratedUrl(
+      "Webhook URL",
+      `${origin}/api/integrations/gitlab/events`,
+    );
+    // The first list is the application's scope; the hook's events are the second.
+    expect(await surface.gitlab.subscribedEvents(1)).toEqual([
+      "issues_events",
+      "confidential_issues_events",
+      "note_events",
+      "confidential_note_events",
+      "merge_requests_events",
+      "push_events",
+    ]);
+    await surface.shoot(SHOTS, "apps-11b-gitlab-expanded-https.desktop");
+    await surface.gitlab.fill({ ...WORKING_CREDENTIALS.GitLab, ...GITLAB_EVENT_CREDENTIALS });
+    await surface.gitlab.save();
+    await expect(page.getByRole("heading", { name: "Install Paseo in Acme" })).toBeVisible();
+    await page.getByRole("link", { name: "Accept installation" }).click();
+    // GitLab authorized the grant; the group it covers is chosen back on this surface, and
+    // nothing is saved until it is.
+    await surface.gitlab.expectExpanded();
+    await surface.gitlab.expectStatus("Not set up");
+    await surface.shoot(SHOTS, "apps-11c-gitlab-choose-group.desktop");
+    await surface.chooseGitlabNamespace("acme");
+    await surface.gitlab.expectStatus("Connected");
+    await surface.gitlab.expectSummary({
+      Application: "GitLab app",
+      Groups: "acme",
+      Events: "Waiting for the first event",
+    });
+    await surface.shoot(SHOTS, "apps-11d-gitlab-connected.desktop");
+
+    // Only a correctly signed delivery for a project the connection covers changes that.
+    await session.seedSignedDelivery("gitlab");
+    await page.reload();
+    await surface.gitlab.expand();
+    await surface.gitlab.expectSummary({ Events: /^Last received/u });
+    await surface.shoot(SHOTS, "apps-11e-gitlab-receiving-events.desktop");
+
     await surface.collapseAll();
     await surface.shoot(SHOTS, "apps-12-all-four-connected.desktop");
 
@@ -729,6 +782,7 @@ test("the operator finishes, then manages the same apps from the account menu", 
       Slack: "Connected",
       Discord: "Connected",
       Linear: "Connected",
+      GitLab: "Connected",
     });
     // Nothing is open on arrival here either; there is no journey to lead.
     for (const section of surface.sections()) await section.expectCollapsed();

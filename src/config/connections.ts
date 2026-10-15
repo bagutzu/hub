@@ -1,5 +1,5 @@
 export interface ConnectionTokenLease {
-  provider: "github";
+  provider: "github" | "gitlab";
   token: string;
   expiresAt: number;
 }

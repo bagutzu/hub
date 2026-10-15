@@ -79,7 +79,13 @@ describe("Slack registration", () => {
       configuration: null,
     });
     assert.deepEqual(
-      registration.connection.status({ github: [], discord: [], slack: [], linear: [] }),
+      registration.connection.status({
+        github: [],
+        discord: [],
+        slack: [],
+        linear: [],
+        gitlab: [],
+      }),
       {
         status: "notConfigured",
       },
@@ -299,6 +305,7 @@ describe("Slack registration", () => {
           },
         ],
         linear: [],
+        gitlab: [],
       }),
       { status: "requiresReauthorization" },
     );
@@ -404,6 +411,7 @@ function callbackDatabase() {
       sessionId: input.access.sessionId,
       candidateExternalId: null,
       pkceVerifier: null,
+      candidateGrant: null,
       configurationVersion: input.configurationVersion,
       providerApplicationId: input.providerApplicationId,
       callbackOrigin: input.callbackOrigin,

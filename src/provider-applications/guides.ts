@@ -56,6 +56,8 @@ export interface GuideField {
   required: string;
   /** The app works without it; only the capability it unlocks is unavailable. */
   optional?: true;
+  /** Prefilled on an empty form. The one field with a sensible answer before the operator has one. */
+  defaultValue?: string;
 }
 
 /**
@@ -658,11 +660,182 @@ export const LINEAR_GUIDE: ProviderGuide = {
   receivesEvents: true,
 };
 
+export const GITLAB_GUIDE: ProviderGuide = {
+  provider: "gitlab",
+  name: "GitLab",
+  summary: "Connects the groups where agents will read issues and merge requests.",
+  portal: {
+    label: "Open GitLab applications",
+    href: "https://gitlab.com/-/user_settings/applications",
+  },
+  formTitle: "Paste from GitLab",
+  summaryLabels: { identity: "Application", connections: "Groups" },
+  environmentVariables: [
+    "GITLAB_URL",
+    "GITLAB_CLIENT_ID",
+    "GITLAB_CLIENT_SECRET",
+    "GITLAB_WEBHOOK_SECRET",
+  ],
+  groups: [
+    {
+      id: "application",
+      steps: [
+        {
+          segments: [
+            { kind: "text", value: "Open " },
+            {
+              kind: "link",
+              value: "GitLab applications",
+              href: "https://gitlab.com/-/user_settings/applications",
+            },
+            { kind: "text", value: " (or a group's " },
+            { kind: "term", value: "Settings" },
+            { kind: "text", value: " → " },
+            { kind: "term", value: "Applications" },
+            { kind: "text", value: ") and add an application with a name." },
+          ],
+        },
+        {
+          segments: [
+            { kind: "text", value: "Set the " },
+            { kind: "term", value: "Redirect URI" },
+            { kind: "text", value: ":" },
+          ],
+          urls: ["redirect"],
+        },
+        {
+          segments: [
+            { kind: "text", value: "Keep " },
+            { kind: "term", value: "Confidential" },
+            { kind: "text", value: " on, and under " },
+            { kind: "term", value: "Scopes" },
+            { kind: "text", value: " select:" },
+          ],
+          events: ["api"],
+        },
+        {
+          segments: [
+            { kind: "text", value: "Save the application, then copy its " },
+            { kind: "term", value: "Application ID" },
+            { kind: "text", value: " and " },
+            { kind: "term", value: "Secret" },
+            { kind: "text", value: "." },
+          ],
+        },
+      ],
+      fields: [
+        {
+          name: "url",
+          label: "GitLab URL",
+          kind: "text",
+          description: "gitlab.com, or the address of your own GitLab instance.",
+          identifier: "url",
+          defaultValue: "https://gitlab.com",
+          required: "Enter the GitLab URL.",
+        },
+        {
+          name: "clientId",
+          label: "Application ID",
+          kind: "text",
+          identifier: "clientId",
+          required: "Enter the Application ID.",
+        },
+        {
+          name: "clientSecret",
+          label: "Secret",
+          kind: "secret",
+          required: "Enter the Secret.",
+        },
+      ],
+    },
+    {
+      id: "events",
+      title: "Event triggers",
+      description:
+        "Start workflows from GitLab issues, merge requests, notes, and pushes. Group access works without this.",
+      unavailableAt: (origin) =>
+        isSecureOrigin(origin)
+          ? undefined
+          : `GitLab delivers events to a webhook URL, so this part needs a public HTTPS address. Hub is at ${origin}. Group access works now; reopen Hub at its HTTPS address to add event triggers.`,
+      steps: [
+        {
+          segments: [
+            { kind: "text", value: "Generate a signing token: " },
+            { kind: "term", value: "whsec_" },
+            { kind: "text", value: " followed by 32 random bytes in base64 (" },
+            { kind: "term", value: "openssl rand -base64 32" },
+            { kind: "text", value: "). Paste it below; every project hook uses the same one." },
+          ],
+        },
+        {
+          segments: [
+            {
+              kind: "text",
+              value:
+                "GitLab's webhook form only generates a token of its own, so add each project's webhook through the ",
+            },
+            {
+              kind: "link",
+              value: "project webhooks API",
+              href: "https://docs.gitlab.com/api/project_webhooks/",
+            },
+            { kind: "text", value: " with this URL as " },
+            { kind: "term", value: "url" },
+            { kind: "text", value: " and the signing token as " },
+            { kind: "term", value: "signing_token" },
+            { kind: "text", value: ":" },
+          ],
+          urls: ["events"],
+        },
+        {
+          segments: [{ kind: "text", value: "Set these to true:" }],
+          events: [
+            "issues_events",
+            "confidential_issues_events",
+            "note_events",
+            "confidential_note_events",
+            "merge_requests_events",
+            "push_events",
+          ],
+        },
+      ],
+      fields: [
+        {
+          name: "webhookSecret",
+          label: "Webhook signing token",
+          kind: "secret",
+          description: "Until this is set, GitLab events are rejected and no trigger fires.",
+          required: "Enter the webhook signing token.",
+          optional: true,
+        },
+      ],
+    },
+  ],
+  urls: [
+    { key: "redirect", label: "Redirect URI", path: "/api/integrations/gitlab/callback" },
+    { key: "events", label: "Webhook URL", path: "/api/integrations/gitlab/events" },
+  ],
+  savingContinues: true,
+  actions: {
+    save: "Save and continue to GitLab",
+    savePending: "Continuing to GitLab…",
+    connect: "Connect a GitLab group",
+    connectAgain: "Connect another group",
+  },
+  saveHint:
+    "GitLab asks you to authorize the application, then Hub asks which group it covers, before anything is saved.",
+  requiresHttps: false,
+  httpsRequirement: (origin) =>
+    `GitLab event triggers need a public HTTPS address, and Hub is at ${origin}.`,
+  receivesEvents: true,
+};
+
 export const PROVIDER_GUIDES: readonly ProviderGuide[] = [
   GITHUB_GUIDE,
   SLACK_GUIDE,
   DISCORD_GUIDE,
   LINEAR_GUIDE,
+  GITLAB_GUIDE,
 ];
 
 export function guideFor(provider: Provider): ProviderGuide {
