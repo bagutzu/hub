@@ -70,6 +70,8 @@ async function fixture(now = Date.now) {
     completionTokenSecret: "secret",
     completeExecution: async ({ executionId }) =>
       (await database.transitionAgentExecution(executionId, "succeeded")).execution,
+    failExecution: async ({ executionId }) =>
+      (await database.transitionAgentExecution(executionId, "failed")).execution,
   });
   async function arrival(
     key: string | null | false = "conversation",

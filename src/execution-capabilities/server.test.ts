@@ -154,7 +154,7 @@ describe("execution capability MCP boundary", () => {
       await client.connect(transport);
       assert.deepEqual(
         (await client.listTools()).tools.map((tool) => tool.name),
-        ["finish_execution", "reply"],
+        ["finish_execution", "fail_execution", "reply"],
       );
       const result = await client.callTool({
         name: "finish_execution",
@@ -208,6 +208,10 @@ describe("execution capability MCP boundary", () => {
           {
             name: "finish_execution",
             description: "Completes this execution and records the configured structured output.",
+          },
+          {
+            name: "fail_execution",
+            description: "Ends this execution as failed with the reason the agent cannot continue.",
           },
           {
             name: "reply",
@@ -338,7 +342,10 @@ describe("execution capability MCP boundary", () => {
       await abortHttpRequestAfterFirstResponseData({
         port: address.port,
         path: `/agent-executions/${fixture.executionId}/mcp`,
-        body: mcpRequest("tools/call", { name: "finish_execution", arguments: {} }),
+        body: mcpRequest("tools/call", {
+          name: "finish_execution",
+          arguments: {},
+        }),
         onFirstData: releaseBody,
       });
       await transportClosed;
@@ -496,6 +503,86 @@ describe("execution capability MCP boundary", () => {
         },
       },
     ]);
+  });
+
+  it("ends the execution as failed with the agent's reason", async () => {
+    const fixture = await capabilityFixture(undefined, "succeeded", 1, undefined, false, [
+      "slack.reply",
+    ]);
+    const reason = "a required tool server needs authentication";
+
+    const listed = ToolsListSchema.parse((await fixture.call("tools/list")).result);
+    assert.deepEqual(listed.tools.find((tool) => tool.name === "fail_execution")?.inputSchema, {
+      type: "object",
+      properties: {
+        reason: { type: "string", minLength: 1, maxLength: 2000 },
+      },
+      required: ["reason"],
+      additionalProperties: false,
+    });
+    const response = await fixture.call("tools/call", {
+      name: "fail_execution",
+      arguments: { reason },
+    });
+
+    assert.equal(ToolResultSchema.parse(response.result).isError, undefined);
+    assert.deepEqual(fixture.failures, [
+      { executionId: fixture.executionId, token: "token", reason },
+    ]);
+    assert.deepEqual(fixture.completions, []);
+    const execution = await fixture.database.findAgentExecutionById(fixture.executionId);
+    assert.equal(execution?.status, "failed");
+    assert.deepEqual(execution?.result, { status: "failed", reason });
+  });
+
+  it.each([
+    { name: "a missing reason", arguments: {} },
+    { name: "an empty reason", arguments: { reason: "" } },
+    { name: "an overlong reason", arguments: { reason: "x".repeat(2001) } },
+    { name: "an extra argument", arguments: { reason: "stop", output: {} } },
+  ])("refuses fail_execution with $name", async (testCase) => {
+    const fixture = await capabilityFixture();
+
+    const response = await fixture.call("tools/call", {
+      name: "fail_execution",
+      arguments: testCase.arguments,
+    });
+
+    assert.equal(ToolResultSchema.parse(response.result).isError, true);
+    assert.deepEqual(fixture.failures, []);
+    assert.equal(
+      (await fixture.database.findAgentExecutionById(fixture.executionId))?.status,
+      "spawning",
+    );
+  });
+
+  it("reports a fail_execution that no longer transitions as a tool error", async () => {
+    const fixture = await capabilityFixture();
+    const server = createExecutionCapabilityServer({
+      database: fixture.database,
+      outputs: fixture.outputs,
+      completeExecution: () => Promise.reject(new Error("not called")),
+      failExecution: () => Promise.resolve(undefined),
+    });
+
+    const response = await server.handle(
+      new Request(`https://hub.test/agent-executions/${fixture.executionId}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer token",
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: mcpRequest("tools/call", {
+          name: "fail_execution",
+          arguments: { reason: "stop" },
+        }),
+      }),
+      fixture.executionId,
+    );
+
+    const body = RpcResponseSchema.parse(await response.json());
+    assert.equal(ToolResultSchema.parse(body.result).isError, true);
   });
 
   it("reports a failed durable completion as a tool error", async () => {
@@ -768,6 +855,11 @@ async function capabilityFixture(
     token: string;
     output?: unknown;
   }> = [];
+  const failures: Array<{
+    executionId: string;
+    token: string;
+    reason: string;
+  }> = [];
   const server = createExecutionCapabilityServer({
     database,
     outputs,
@@ -781,6 +873,13 @@ async function capabilityFixture(
         )
       ).execution;
     },
+    async failExecution(input) {
+      failures.push(input);
+      const transition = await database.transitionAgentExecution(input.executionId, "failed", {
+        result: { status: "failed", reason: input.reason },
+      });
+      return transition.transitioned ? transition.execution : undefined;
+    },
   });
   let id = 0;
   return {
@@ -791,6 +890,7 @@ async function capabilityFixture(
     outputs,
     outbound,
     completions,
+    failures,
     async call(method: string, params?: unknown) {
       id += 1;
       const response = await server.handle(

@@ -132,7 +132,8 @@ agent:
 
 Options and modes are specific to the selected provider and are not portable. New triggers require
 an explicit `mode`; `thinkingOptionId` may be omitted to use the provider default. Hub always grants
-the execution-scoped `finish_execution` tool. Conversational triggers also receive an unlimited
+the execution-scoped `finish_execution` tool, and `fail_execution` to end the execution as failed
+with a reason. Conversational triggers also receive an unlimited
 event-native `reply` tool for progress and final responses. Provider or machine policy still
 controls every unrelated tool. A read-only provider configuration is defense in depth; Hub output
 authorization remains enforced by the execution MCP server.

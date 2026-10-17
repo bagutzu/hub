@@ -34,6 +34,29 @@ describe("production Phase 1 manual runs", () => {
     assert.equal(run.workflowStatus, "running");
   });
 
+  it("fails the run with the reason its agent gave through fail_execution", async () => {
+    await hub.connectDaemon();
+    await hub.installConfiguration({ yaml: hub.manualConfigurationYaml() });
+    const run = await hub.runCanonicalManual({ deliveryKey: "agent-fail-execution" });
+    assert.ok(run.triggerRunId);
+    await hub.waitForDeliveredPrompts(1);
+    const execution = await hub.waitForPendingExecution();
+    const reason = "a required tool server needs authentication";
+
+    const response = await hub.callExecutionTool(execution.id, "fail_execution", { reason });
+    assert.equal(response["error"], undefined);
+    await hub.drainWorkflowOutbox();
+
+    assert.deepEqual(await hub.workflowExecutionState(execution.id), {
+      executionStatus: "failed",
+      stepStatus: "failed",
+      stepOutput: { status: "failed", reason },
+      stepFailure: reason,
+      runStatus: "failed",
+      runFailure: reason,
+    });
+  });
+
   it("keeps duplicate provider delivery idempotent at the enqueue boundary", async () => {
     await hub.connectDaemon();
     await hub.installConfiguration({ yaml: hub.manualConfigurationYaml() });

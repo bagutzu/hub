@@ -47,6 +47,18 @@ export interface MaterializedOutputCapability {
 }
 
 export const finishExecutionToolName = "finish_execution" as const;
+export const failExecutionToolName = "fail_execution" as const;
+
+const failExecutionTool: OutputToolDefinition = {
+  name: failExecutionToolName,
+  description: "Ends this execution as failed with the reason the agent cannot continue.",
+  inputSchema: {
+    type: "object",
+    properties: { reason: { type: "string", minLength: 1, maxLength: 2000 } },
+    required: ["reason"],
+    additionalProperties: false,
+  },
+};
 
 function finishExecutionToolDescription(outputSchema: JsonValue | undefined): string {
   return outputSchema === undefined
@@ -160,6 +172,7 @@ export function executionToolDefinitions(
       description: finishExecutionToolDescription(outputSchema),
       inputSchema: toolSchema(compileFinishExecutionArguments(outputSchema).schema),
     },
+    failExecutionTool,
     ...materializedOutputs.map(({ declaration, capability }) => ({
       name: capability.tool.name,
       description:

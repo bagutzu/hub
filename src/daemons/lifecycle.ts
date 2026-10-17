@@ -846,6 +846,45 @@ export class DaemonDispatchLifecycle {
     },
     options: { deferHubAction?: boolean } = {},
   ): Promise<AgentExecutionRecord> {
+    const currentExecution = await this.authorizeExecutionCallback(input);
+    if (isTerminalExecutionStatus(currentExecution.status)) {
+      return currentExecution;
+    }
+
+    if (currentExecution.launchIntent?.outputSchema !== undefined) {
+      validateStructuredOutput(currentExecution.launchIntent.outputSchema, input.output);
+    }
+    this.clearExecutionDeadline(input.executionId);
+    const execution = await this.completeAgentExecution(input.executionId, {
+      completedByAgent: true,
+      ...(options.deferHubAction === undefined ? {} : { deferHubAction: options.deferHubAction }),
+      ...(input.output === undefined ? {} : { output: input.output }),
+    });
+    if (options.deferHubAction === true && execution.hubAction === "archive") {
+      await this.reconcileHubActionSafely(execution);
+    }
+    if (execution.status !== "succeeded") {
+      throw new AgentExecutionCompletionFailure("expired");
+    }
+    return execution;
+  }
+
+  async failAgentExecutionFromCallback(input: {
+    executionId: string;
+    token: string;
+    reason: string;
+  }): Promise<AgentExecutionRecord | undefined> {
+    const currentExecution = await this.authorizeExecutionCallback(input);
+    if (isTerminalExecutionStatus(currentExecution.status)) {
+      return undefined;
+    }
+    return this.failAgentExecution(input.executionId, input.reason);
+  }
+
+  private async authorizeExecutionCallback(input: {
+    executionId: string;
+    token: string;
+  }): Promise<AgentExecutionRecord> {
     const existingExecution = await this.options.database.findAgentExecutionById(input.executionId);
     if (existingExecution === undefined) {
       throw new AgentExecutionCompletionFailure("not_found");
@@ -873,23 +912,7 @@ export class DaemonDispatchLifecycle {
     if (await this.expireExecutionIfDeadlineElapsed(currentExecution)) {
       throw new AgentExecutionCompletionFailure("expired");
     }
-
-    if (currentExecution.launchIntent?.outputSchema !== undefined) {
-      validateStructuredOutput(currentExecution.launchIntent.outputSchema, input.output);
-    }
-    this.clearExecutionDeadline(input.executionId);
-    const execution = await this.completeAgentExecution(input.executionId, {
-      completedByAgent: true,
-      ...(options.deferHubAction === undefined ? {} : { deferHubAction: options.deferHubAction }),
-      ...(input.output === undefined ? {} : { output: input.output }),
-    });
-    if (options.deferHubAction === true && execution.hubAction === "archive") {
-      await this.reconcileHubActionSafely(execution);
-    }
-    if (execution.status !== "succeeded") {
-      throw new AgentExecutionCompletionFailure("expired");
-    }
-    return execution;
+    return currentExecution;
   }
 
   async recoverAgentExecutionDeadlines(): Promise<void> {
