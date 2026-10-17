@@ -4,7 +4,7 @@ import { OutputExecutorRegistry, replyOutputTool } from "./outputs.js";
 import { executionToolPolicy } from "./tool-policy.js";
 
 describe("execution tool policy", () => {
-  it("preapproves finish plus exactly the materialized execution capabilities", () => {
+  it("preapproves finish, fail plus exactly the materialized execution capabilities", () => {
     const capabilities = new OutputExecutorRegistry();
     capabilities.register({
       type: "discord.reply",
@@ -40,12 +40,16 @@ describe("execution tool policy", () => {
     assert.deepEqual(materialized, {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "fail_execution" },
         { kind: "mcp", server: "hub", tool: "reply" },
         { kind: "mcp", server: "hub", tool: "publish" },
       ],
     });
     assert.deepEqual(unavailable, {
-      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      preapproved: [
+        { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "fail_execution" },
+      ],
     });
   });
 });

@@ -1156,7 +1156,7 @@ export class HubHarness {
 
   async callExecutionTool(
     executionId: string,
-    name: "finish_execution" | "reply",
+    name: "finish_execution" | "fail_execution" | "reply",
     args: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const token = this.requireDaemon().completionToken(executionId);
@@ -1182,7 +1182,7 @@ export class HubHarness {
 
   async callSessionTool(
     executionId: string,
-    name: "finish_execution" | "reply",
+    name: "finish_execution" | "fail_execution" | "reply",
     args: Record<string, unknown> = {},
   ): Promise<Record<string, unknown>> {
     const execution = await this.execution(executionId);

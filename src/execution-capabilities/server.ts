@@ -13,6 +13,7 @@ import { reportFailure, withReference } from "../failures/index.js";
 import { compileJsonSchema, formatJsonSchemaErrors } from "../workflows/json-schema.js";
 import {
   executionToolDefinitions,
+  failExecutionToolName,
   finishExecutionToolName,
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
@@ -35,6 +36,11 @@ interface ExecutionCapabilityOptions {
     token: string;
     output?: unknown;
   }): Promise<AgentExecutionRecord>;
+  failExecution(input: {
+    executionId: string;
+    token: string;
+    reason: string;
+  }): Promise<AgentExecutionRecord | undefined>;
   now?: () => Date;
 }
 
@@ -188,16 +194,7 @@ async function authenticateExecution(
 }
 
 function createMcpServer(
-  options: {
-    database: Database;
-    outputs: OutputExecutorRegistry;
-    completeExecution(input: {
-      executionId: string;
-      token: string;
-      output?: unknown;
-    }): Promise<AgentExecutionRecord>;
-    now?: () => Date;
-  },
+  options: ExecutionCapabilityOptions,
   execution: AgentExecutionRecord,
   token: string,
   materializedOutputs: readonly MaterializedOutputCapability[],
@@ -222,7 +219,7 @@ function createMcpServer(
 }
 
 async function callExecutionTool(
-  options: Pick<ExecutionCapabilityOptions, "database" | "outputs" | "completeExecution" | "now">,
+  options: ExecutionCapabilityOptions,
   execution: AgentExecutionRecord,
   token: string,
   materializedOutputs: readonly MaterializedOutputCapability[],
@@ -242,6 +239,8 @@ async function callExecutionTool(
   if (!validation.valid) return toolFailure(validation.message);
   if (toolName === finishExecutionToolName)
     return finishExecutionCall(options, execution, token, args, materializedOutputs);
+  if (toolName === failExecutionToolName)
+    return failExecutionCall(options, execution, token, String(args["reason"]));
   const output = materializedOutputs.find((item) => item.capability.tool.name === toolName);
   return output === undefined
     ? toolFailure(`Tool ${toolName} not found`)
@@ -304,6 +303,44 @@ async function finishExecutionCall(
     return toolFailure(
       withReference(
         "Execution could not be finished. Check its current status and required outputs.",
+        failure.requestId,
+      ),
+    );
+  }
+}
+
+async function failExecutionCall(
+  options: ExecutionCapabilityOptions,
+  execution: AgentExecutionRecord,
+  token: string,
+  reason: string,
+) {
+  try {
+    const failed = await options.failExecution({ executionId: execution.id, token, reason });
+    if (failed === undefined) {
+      reportFailure(
+        new Error("execution failure did not transition"),
+        {
+          operation: "execution_capability.fail.transition",
+          component: "execution_capabilities",
+          executionId: execution.id,
+        },
+        { kind: "conflict" },
+      );
+      return toolFailure(
+        "Execution could not be finished because its state changed. Reload its current status.",
+      );
+    }
+    return toolSuccess("Execution failed");
+  } catch (error) {
+    const failure = reportFailure(error, {
+      operation: "execution_capability.fail",
+      component: "execution_capabilities",
+      executionId: execution.id,
+    });
+    return toolFailure(
+      withReference(
+        "Execution could not be finished. Check its current status.",
         failure.requestId,
       ),
     );

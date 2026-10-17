@@ -175,7 +175,10 @@ describe("daemon enrollment and execution", () => {
     assert.equal(agent.prompt, "Reply pong.");
     assert.equal(agent.thinkingOptionId, "xhigh");
     assert.deepEqual(agent.toolPolicy, {
-      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      preapproved: [
+        { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "fail_execution" },
+      ],
     });
     assert.deepEqual(agent.env, {
       USER_DEFINED: "yes",
@@ -228,6 +231,7 @@ describe("daemon enrollment and execution", () => {
     assert.deepEqual(hub.createdAgentLaunch().toolPolicy, {
       preapproved: [
         { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "fail_execution" },
         { kind: "mcp", server: "hub", tool: "reply" },
       ],
     });
@@ -237,7 +241,10 @@ describe("daemon enrollment and execution", () => {
     });
     assert.equal(hub.createdAgentLaunch().prompt, "Reply pong.");
     assert.deepEqual(hub.createdAgentLaunch().toolPolicy, {
-      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      preapproved: [
+        { kind: "mcp", server: "hub", tool: "finish_execution" },
+        { kind: "mcp", server: "hub", tool: "fail_execution" },
+      ],
     });
   });
 
@@ -315,6 +322,10 @@ describe("daemon enrollment and execution", () => {
           description: "Completes this execution and records its optional structured output.",
         },
         {
+          name: "fail_execution",
+          description: "Ends this execution as failed with the reason the agent cannot continue.",
+        },
+        {
           name: "reply",
           description:
             "Sends a reply to the conversation that triggered this execution. (up to 1 times).",
@@ -345,6 +356,10 @@ describe("daemon enrollment and execution", () => {
         {
           name: "finish_execution",
           description: "Completes this execution and records the configured structured output.",
+        },
+        {
+          name: "fail_execution",
+          description: "Ends this execution as failed with the reason the agent cannot continue.",
         },
       ],
     );
@@ -387,7 +402,7 @@ describe("daemon enrollment and execution", () => {
     );
     assert.deepEqual(
       (await hub.listExecutionTools(classifier.id)).map(({ name }) => name),
-      ["finish_execution"],
+      ["finish_execution", "fail_execution"],
     );
 
     const completion = await hub.callExecutionTool(classifier.id, "finish_execution", {
@@ -420,7 +435,7 @@ describe("daemon enrollment and execution", () => {
     });
     assert.deepEqual(
       (await hub.listExecutionTools(worker.id)).map(({ name }) => name),
-      ["finish_execution", "reply"],
+      ["finish_execution", "fail_execution", "reply"],
     );
   });
 
